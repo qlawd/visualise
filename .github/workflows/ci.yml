@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: validate gallery + skill
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check HTML well-formedness
+        run: |
+          for f in gallery/*.html; do
+            python3 -c "
+          import html.parser, sys
+          p = html.parser.HTMLParser()
+          p.feed(open('$f').read())
+          print('OK: $f')
+          " || exit 1
+          done
+
+      - name: Check file sizes
+        run: |
+          for f in gallery/*.html; do
+            size=$(stat -c%s "$f" 2>/dev/null || stat -f%z "$f")
+            if [ "$size" -gt 512000 ]; then
+              echo "FAIL: $f is ${size} bytes (max 500KB)"
+              exit 1
+            fi
+            echo "OK: $f (${size} bytes)"
+          done
+
+      - name: Check SKILL.md frontmatter
+        run: |
+          head -1 SKILL.md | grep -q "^---" || { echo "SKILL.md missing frontmatter"; exit 1; }
+          grep -q "^name:" SKILL.md || { echo "SKILL.md missing name field"; exit 1; }
+          grep -q "^description:" SKILL.md || { echo "SKILL.md missing description field"; exit 1; }
+          echo "OK: SKILL.md frontmatter valid"
+
+      - name: Check SKILL.md size
+        run: |
+          lines=$(wc -l < SKILL.md)
+          echo "SKILL.md: $lines lines"
+          [ "$lines" -lt 300 ] || { echo "SKILL.md exceeds 300 lines"; exit 1; }
