@@ -2,6 +2,10 @@
 
 <br>
 
+<img src="docs/assets/logo.svg" alt="visualise logo" width="120">
+
+<br><br>
+
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/banner.svg">
   <source media="(prefers-color-scheme: light)" srcset="docs/assets/banner.svg">
