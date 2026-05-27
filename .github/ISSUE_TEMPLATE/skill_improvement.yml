@@ -1,0 +1,22 @@
+name: Skill improvement
+description: Suggest a change to SKILL.md prompt engineering
+labels: ["prompt", "triage"]
+body:
+  - type: textarea
+    id: failure
+    attributes:
+      label: What went wrong
+      description: "What did you type, and what did the skill produce that wasn't right?"
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested SKILL.md change
+      description: "If you have a specific wording change, include it here."

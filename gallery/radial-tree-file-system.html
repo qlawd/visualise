@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Project Structure — Radial Tree</title>
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<style>
+  *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 100%; height: 100%;
+    background: #0a0a0a; color: #e0e0e0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    overflow: hidden;
+  }
+  #header {
+    position: absolute; top: 28px; left: 0; right: 0;
+    text-align: center; pointer-events: none; z-index: 10;
+  }
+  #header h1 {
+    font-size: 26px; font-weight: 600; letter-spacing: 0.5px;
+    color: #e0e0e0;
+  }
+  #header p {
+    font-size: 13px; color: #777; margin-top: 4px;
+  }
+  svg { display: block; }
+  .link {
+    fill: none; stroke-opacity: 0.35; stroke-width: 1.4px;
+  }
+  .node circle {
+    stroke-width: 1.8px; cursor: pointer;
+    transition: filter 0.15s;
+  }
+  .node:hover circle { filter: brightness(1.35) drop-shadow(0 0 6px rgba(255,255,255,0.25)); }
+  .node text {
+    font-size: 11px; fill: #ccc; pointer-events: none;
+    text-shadow: 0 0 4px #0a0a0a, 0 0 8px #0a0a0a;
+  }
+  #tooltip {
+    position: absolute; pointer-events: none; opacity: 0;
+    background: #1a1a1a; border: 1px solid #333; border-radius: 6px;
+    padding: 8px 12px; font-size: 12px; line-height: 1.5;
+    color: #ccc; z-index: 100; max-width: 260px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.6);
+    transition: opacity 0.15s;
+  }
+  #tooltip .tt-path { color: #fff; font-weight: 600; font-size: 12px; word-break: break-all; }
+  #tooltip .tt-meta { color: #999; margin-top: 2px; }
+  #tooltip .tt-icon { margin-right: 4px; }
+</style>
+</head>
+<body>
+<div id="header">
+  <h1>Project Structure</h1>
+  <p>Click to expand. Hover for details.</p>
+</div>
+<div id="tooltip"></div>
+<script>
+(function () {
+
+// ── Data ──────────────────────────────────────────────
+const tree = {
+  name: "my-app", children: [
+    { name: "src", children: [
+      { name: "components", children: [
+        { name: "Header.tsx" }, { name: "Footer.tsx" }, { name: "Sidebar.tsx" },
+        { name: "Modal.tsx" }, { name: "Button.tsx" }, { name: "Card.tsx" }, { name: "Layout.tsx" }
+      ]},
+      { name: "pages", children: [
+        { name: "Home.tsx" }, { name: "Dashboard.tsx" }, { name: "Settings.tsx" },
+        { name: "Profile.tsx" }, { name: "Login.tsx" }
+      ]},
+      { name: "hooks", children: [
+        { name: "useAuth.ts" }, { name: "useApi.ts" }, { name: "useTheme.ts" }
+      ]},
+      { name: "utils", children: [
+        { name: "format.ts" }, { name: "validate.ts" }, { name: "api.ts" }, { name: "constants.ts" }
+      ]},
+      { name: "styles", children: [
+        { name: "global.css" }, { name: "theme.css" }, { name: "variables.css" }
+      ]}
+    ]},
+    { name: "server", children: [
+      { name: "routes", children: [
+        { name: "auth.ts" }, { name: "users.ts" }, { name: "api.ts" }
+      ]},
+      { name: "middleware", children: [
+        { name: "cors.ts" }, { name: "auth.ts" }, { name: "logger.ts" }
+      ]},
+      { name: "models", children: [
+        { name: "User.ts" }, { name: "Session.ts" }, { name: "Config.ts" }
+      ]}
+    ]},
+    { name: "tests", children: [
+      { name: "unit", children: [
+        { name: "Button.test.ts" }, { name: "format.test.ts" }, { name: "useAuth.test.ts" }
+      ]},
+      { name: "integration", children: [
+        { name: "api.test.ts" }, { name: "auth.test.ts" }
+      ]},
+      { name: "e2e", children: [
+        { name: "login.spec.ts" }, { name: "dashboard.spec.ts" }, { name: "settings.spec.ts" }
+      ]}
+    ]},
+    { name: "config", children: [
+      { name: "webpack.config.js" }, { name: "babel.config.js" },
+      { name: ".eslintrc.js" }, { name: "jest.config.js" }
+    ]},
+    { name: "public", children: [
+      { name: "index.html" }, { name: "favicon.ico" }, { name: "manifest.json" }
+    ]}
+  ]
+};
+
+// ── Color scheme ──────────────────────────────────────
+const branchColors = {
+  "src":    "#2dd4bf",   // teal
+  "server": "#fb7185",   // coral
+  "tests":  "#a78bfa",   // purple
+  "config": "#fbbf24",   // gold
+  "public": "#6ee7b7"    // mint
+};
+const rootColor = "#e0e0e0";
+
+function getBranch(d) {
+  let n = d;
+  while (n.parent && n.parent.parent) n = n.parent;
+  return n.data.name;
+}
+function nodeColor(d) {
+  if (!d.parent) return rootColor;
+  return branchColors[getBranch(d)] || "#888";
+}
+
+// ── Helpers ───────────────────────────────────────────
+function isDir(d) { return !!(d.data.children || d.data._children || d.children || d._children); }
+
+function fullPath(d) {
+  const parts = d.ancestors().map(a => a.data.name).reverse();
+  return "/" + parts.join("/");
+}
+
+function countFiles(d) {
+  if (!d.children && !d._children) return 0;
+  let count = 0;
+  const stack = (d.children || d._children || []).slice();
+  while (stack.length) {
+    const n = stack.pop();
+    if (n.children || n._children) {
+      (n.children || n._children || []).forEach(c => stack.push(c));
+    } else { count++; }
+  }
+  return count;
+}
+
+function fileIcon(name) {
+  if (/\.tsx?$/.test(name)) return "\u{1F4C4}";
+  if (/\.css$/.test(name))  return "\u{1F3A8}";
+  if (/\.html$/.test(name)) return "\u{1F310}";
+  if (/\.json$/.test(name)) return "\u{1F4CB}";
+  if (/\.js$/.test(name))   return "⚡";
+  if (/\.ico$/.test(name))  return "⭐";
+  if (/\.spec\.|\.test\./.test(name)) return "\u{1F9EA}";
+  return "\u{1F4C1}";
+}
+
+// ── Collapse helper: start depth 2 expanded ───────────
+function collapseAfterDepth(node, maxDepth) {
+  if (node.children && node.depth >= maxDepth) {
+    node._children = node.children;
+    node._children.forEach(c => collapseAfterDepth(c, maxDepth));
+    node.children = null;
+  } else if (node.children) {
+    node.children.forEach(c => collapseAfterDepth(c, maxDepth));
+  }
+}
+
+// ── Layout ────────────────────────────────────────────
+const width  = window.innerWidth;
+const height = window.innerHeight;
+const radius = Math.min(width, height) / 2 - 100;
+
+const svg = d3.select("body").append("svg")
+  .attr("width", width).attr("height", height);
+
+const g = svg.append("g")
+  .attr("transform", `translate(${width / 2},${height / 2})`);
+
+const treeLayout = d3.tree()
+  .size([2 * Math.PI, radius])
+  .separation((a, b) => (a.parent === b.parent ? 1 : 2) / a.depth);
+
+const root = d3.hierarchy(tree);
+root.x0 = 0; root.y0 = 0;
+
+collapseAfterDepth(root, 2);
+
+const linkGroup = g.append("g");
+const nodeGroup = g.append("g");
+
+const tooltip = d3.select("#tooltip");
+
+// ── Radial helpers ────────────────────────────────────
+function project(x, y) {
+  const angle = x - Math.PI / 2;
+  return [y * Math.cos(angle), y * Math.sin(angle)];
+}
+
+// ── Update ────────────────────────────────────────────
+let i = 0;
+const duration = 500;
+
+function update(source) {
+  const treeData = treeLayout(root);
+  const nodes = treeData.descendants();
+  const links = treeData.links();
+
+  // ── Links ───────────────────────────────────────────
+  const link = linkGroup.selectAll("path.link")
+    .data(links, d => d.target.data.name + "-" + (d.target.parent ? d.target.parent.data.name : ""));
+
+  const linkEnter = link.enter().append("path")
+    .attr("class", "link")
+    .attr("stroke", d => nodeColor(d.target))
+    .attr("d", () => {
+      const o = { x: source.x0, y: source.y0 };
+      return linkPath({ source: o, target: o });
+    });
+
+  const linkUpdate = linkEnter.merge(link);
+  linkUpdate.transition().duration(duration)
+    .attr("stroke", d => nodeColor(d.target))
+    .attr("d", d => linkPath(d));
+
+  link.exit().transition().duration(duration)
+    .attr("d", () => {
+      const o = { x: source.x, y: source.y };
+      return linkPath({ source: o, target: o });
+    }).remove();
+
+  function linkPath(d) {
+    return d3.linkRadial()
+      .angle(n => n.x)
+      .radius(n => n.y)(d);
+  }
+
+  // ── Nodes ───────────────────────────────────────────
+  const node = nodeGroup.selectAll("g.node")
+    .data(nodes, d => d.id || (d.id = ++i));
+
+  const nodeEnter = node.enter().append("g")
+    .attr("class", "node")
+    .attr("transform", () => {
+      const p = project(source.x0, source.y0);
+      return `translate(${p[0]},${p[1]})`;
+    })
+    .on("click", (event, d) => {
+      if (d.children) { d._children = d.children; d.children = null; }
+      else if (d._children) { d.children = d._children; d._children = null; }
+      update(d);
+    })
+    .on("mouseenter", (event, d) => {
+      const dir = isDir(d);
+      let html = `<div class="tt-path">${dir ? "\u{1F4C2}" : fileIcon(d.data.name)} ${fullPath(d)}</div>`;
+      if (dir) {
+        html += `<div class="tt-meta">${countFiles(d)} file${countFiles(d) !== 1 ? "s" : ""} inside</div>`;
+        if (d._children) html += `<div class="tt-meta" style="color:#fbbf24;">Click to expand</div>`;
+        else if (d.children) html += `<div class="tt-meta" style="color:#888;">Click to collapse</div>`;
+      } else {
+        const ext = d.data.name.split(".").pop();
+        html += `<div class="tt-meta">Type: .${ext}</div>`;
+      }
+      tooltip.html(html).style("opacity", 1);
+    })
+    .on("mousemove", (event) => {
+      let tx = event.pageX + 14;
+      let ty = event.pageY - 14;
+      if (tx + 260 > window.innerWidth) tx = event.pageX - 270;
+      if (ty + 80 > window.innerHeight) ty = event.pageY - 80;
+      tooltip.style("left", tx + "px").style("top", ty + "px");
+    })
+    .on("mouseleave", () => { tooltip.style("opacity", 0); });
+
+  nodeEnter.append("circle")
+    .attr("r", 0)
+    .attr("fill", d => d._children ? nodeColor(d) : (isDir(d) ? "#0a0a0a" : nodeColor(d)))
+    .attr("stroke", d => nodeColor(d));
+
+  nodeEnter.append("text")
+    .attr("dy", "0.32em")
+    .text(d => d.data.name);
+
+  // ── Update positions ─────────────────────────────
+  const nodeUpdate = nodeEnter.merge(node);
+
+  nodeUpdate.transition().duration(duration)
+    .attr("transform", d => {
+      const p = project(d.x, d.y);
+      return `translate(${p[0]},${p[1]})`;
+    });
+
+  nodeUpdate.select("circle").transition().duration(duration)
+    .attr("r", d => isDir(d) ? 5.5 : 3.5)
+    .attr("fill", d => d._children ? nodeColor(d) : (isDir(d) ? "#0a0a0a" : nodeColor(d)))
+    .attr("stroke", d => nodeColor(d));
+
+  nodeUpdate.select("text")
+    .attr("x", d => (d.x < Math.PI) === !d.children ? 8 : -8)
+    .attr("text-anchor", d => (d.x < Math.PI) === !d.children ? "start" : "end")
+    .attr("transform", d => {
+      if (!d.parent) return null;            // root: no rotation
+      const angle = d.x * 180 / Math.PI;
+      if (d.x >= Math.PI) return `rotate(${angle - 180})`;   // left side: flip
+      return `rotate(${angle})`;                               // right side: normal
+    })
+    .style("fill-opacity", 1);
+
+  // ── Exit ─────────────────────────────────────────
+  const nodeExit = node.exit().transition().duration(duration)
+    .attr("transform", () => {
+      const p = project(source.x, source.y);
+      return `translate(${p[0]},${p[1]})`;
+    }).remove();
+
+  nodeExit.select("circle").attr("r", 0);
+  nodeExit.select("text").style("fill-opacity", 0);
+
+  // Store old positions for transitions
+  nodes.forEach(d => { d.x0 = d.x; d.y0 = d.y; });
+}
+
+update(root);
+
+// ── Responsive resize ─────────────────────────────────
+window.addEventListener("resize", () => {
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  const r = Math.min(w, h) / 2 - 100;
+  svg.attr("width", w).attr("height", h);
+  g.attr("transform", `translate(${w / 2},${h / 2})`);
+  treeLayout.size([2 * Math.PI, r]);
+  update(root);
+});
+
+})();
+</script>
+</body>
+</html>

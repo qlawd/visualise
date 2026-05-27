@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bundle Size Analysis</title>
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<style>
+  *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #0a0a0a;
+    color: #e0e0e0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+    padding: 24px 16px;
+  }
+
+  h1 {
+    font-size: 28px;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+    margin-bottom: 4px;
+  }
+
+  .subtitle {
+    font-size: 14px;
+    color: #888;
+    margin-bottom: 20px;
+  }
+
+  #breadcrumb {
+    font-size: 14px;
+    margin-bottom: 12px;
+    min-height: 22px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  #breadcrumb span {
+    cursor: pointer;
+    color: #888;
+    transition: color 0.2s;
+  }
+
+  #breadcrumb span:hover {
+    color: #e0e0e0;
+  }
+
+  #breadcrumb .sep {
+    color: #555;
+    cursor: default;
+  }
+
+  #breadcrumb .current {
+    color: #e0e0e0;
+    cursor: default;
+  }
+
+  #chart {
+    width: 100%;
+    max-width: 960px;
+    aspect-ratio: 16 / 10;
+    position: relative;
+  }
+
+  #chart svg {
+    width: 100%;
+    height: 100%;
+    display: block;
+  }
+
+  .cell rect {
+    stroke: #0a0a0a;
+    stroke-width: 2px;
+    cursor: pointer;
+    transition: opacity 0.15s;
+  }
+
+  .cell:hover rect {
+    opacity: 0.85;
+  }
+
+  .cell text {
+    fill: #fff;
+    pointer-events: none;
+    font-weight: 600;
+  }
+
+  .cell .label-name {
+    font-size: 13px;
+  }
+
+  .cell .label-size {
+    font-size: 11px;
+    opacity: 0.8;
+    font-weight: 400;
+  }
+
+  #tooltip {
+    position: fixed;
+    pointer-events: none;
+    background: #1a1a1a;
+    border: 1px solid #333;
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 13px;
+    line-height: 1.5;
+    opacity: 0;
+    transition: opacity 0.15s;
+    z-index: 10;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+  }
+
+  #tooltip.visible { opacity: 1; }
+
+  #tooltip .tip-name {
+    font-weight: 700;
+    margin-bottom: 2px;
+  }
+
+  #tooltip .tip-size { color: #aaa; }
+  #tooltip .tip-pct  { color: #aaa; }
+
+  #legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    margin-top: 16px;
+    justify-content: center;
+  }
+
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    color: #aaa;
+  }
+
+  .legend-swatch {
+    width: 12px;
+    height: 12px;
+    border-radius: 3px;
+  }
+</style>
+</head>
+<body>
+
+<h1>Bundle Size Analysis</h1>
+<p class="subtitle">Click a category to zoom in. Click breadcrumb to zoom out.</p>
+<div id="breadcrumb"></div>
+<div id="chart"></div>
+<div id="legend"></div>
+<div id="tooltip">
+  <div class="tip-name"></div>
+  <div class="tip-size"></div>
+  <div class="tip-pct"></div>
+</div>
+
+<script>
+(function () {
+  const categoryColors = {
+    "Framework":     "#2dd4bf",
+    "Styling":       "#a78bfa",
+    "Utilities":     "#f87171",
+    "State":         "#fbbf24",
+    "Animation":     "#34d399",
+    "Visualization": "#fdba74"
+  };
+
+  const data = {
+    name: "bundle",
+    children: [
+      {
+        name: "Framework",
+        children: [
+          { name: "react", size: 6.4 },
+          { name: "react-dom", size: 130 },
+          { name: "next", size: 250 }
+        ]
+      },
+      {
+        name: "Styling",
+        children: [
+          { name: "@emotion/react", size: 40 },
+          { name: "@emotion/styled", size: 15 },
+          { name: "tailwindcss", size: 30 }
+        ]
+      },
+      {
+        name: "Utilities",
+        children: [
+          { name: "lodash", size: 71 },
+          { name: "axios", size: 29 },
+          { name: "date-fns", size: 75 },
+          { name: "zod", size: 14 }
+        ]
+      },
+      {
+        name: "State",
+        children: [
+          { name: "zustand", size: 3 },
+          { name: "react-query", size: 45 }
+        ]
+      },
+      {
+        name: "Animation",
+        children: [
+          { name: "framer-motion", size: 140 }
+        ]
+      },
+      {
+        name: "Visualization",
+        children: [
+          { name: "d3", size: 95 },
+          { name: "three.js", size: 150 }
+        ]
+      }
+    ]
+  };
+
+  const totalSize = data.children.reduce(
+    (sum, cat) => sum + cat.children.reduce((s, p) => s + p.size, 0), 0
+  );
+
+  const chartEl = document.getElementById("chart");
+  const tooltipEl = document.getElementById("tooltip");
+  const breadcrumbEl = document.getElementById("breadcrumb");
+  const legendEl = document.getElementById("legend");
+
+  // Legend
+  Object.entries(categoryColors).forEach(([name, color]) => {
+    const item = document.createElement("div");
+    item.className = "legend-item";
+    item.innerHTML = `<div class="legend-swatch" style="background:${color}"></div>${name}`;
+    legendEl.appendChild(item);
+  });
+
+  const rect = chartEl.getBoundingClientRect();
+  let width = rect.width || 960;
+  let height = rect.height || 600;
+
+  const svg = d3.select("#chart")
+    .append("svg")
+    .attr("viewBox", `0 0 ${width} ${height}`)
+    .attr("preserveAspectRatio", "xMidYMid meet");
+
+  const group = svg.append("g");
+
+  let currentRoot = null;
+
+  function buildTreemap(root, w, h) {
+    const hierarchy = d3.hierarchy(root)
+      .sum(d => d.size || 0)
+      .sort((a, b) => b.value - a.value);
+
+    d3.treemap()
+      .size([w, h])
+      .paddingInner(3)
+      .paddingOuter(4)
+      .round(true)(hierarchy);
+
+    return hierarchy;
+  }
+
+  function colorForNode(d) {
+    if (d.data.name in categoryColors) return categoryColors[d.data.name];
+    if (d.parent && d.parent.data.name in categoryColors) return categoryColors[d.parent.data.name];
+    return "#555";
+  }
+
+  function pctString(size) {
+    return ((size / totalSize) * 100).toFixed(1) + "%";
+  }
+
+  function updateBreadcrumb(path) {
+    breadcrumbEl.innerHTML = "";
+    if (path.length <= 1) return;
+
+    path.forEach((item, i) => {
+      if (i > 0) {
+        const sep = document.createElement("span");
+        sep.className = "sep";
+        sep.textContent = "/";
+        breadcrumbEl.appendChild(sep);
+      }
+      const span = document.createElement("span");
+      span.textContent = item.name;
+      if (i < path.length - 1) {
+        span.addEventListener("click", () => {
+          if (i === 0) zoomTo(data);
+        });
+      } else {
+        span.className = "current";
+      }
+      breadcrumbEl.appendChild(span);
+    });
+  }
+
+  function render(root, path) {
+    currentRoot = root;
+    const tree = buildTreemap(root, width, height);
+    const leaves = tree.leaves();
+    const isTopLevel = root === data;
+
+    updateBreadcrumb(path);
+
+    const t = d3.transition().duration(300).ease(d3.easeCubicInOut);
+
+    // Bind data
+    const cells = group.selectAll(".cell")
+      .data(isTopLevel ? tree.children : leaves, d => d.data.name);
+
+    // Exit
+    cells.exit()
+      .transition(t)
+      .style("opacity", 0)
+      .remove();
+
+    // Enter
+    const enter = cells.enter()
+      .append("g")
+      .attr("class", "cell")
+      .style("opacity", 0);
+
+    enter.append("rect");
+    enter.append("text").attr("class", "label-name");
+    enter.append("text").attr("class", "label-size");
+
+    // Merge
+    const merged = enter.merge(cells);
+
+    merged.transition(t).style("opacity", 1);
+
+    merged.select("rect")
+      .on("click", null)
+      .transition(t)
+      .attr("x", d => d.x0)
+      .attr("y", d => d.y0)
+      .attr("width", d => d.x1 - d.x0)
+      .attr("height", d => d.y1 - d.y0)
+      .attr("rx", 4)
+      .attr("fill", d => {
+        if (isTopLevel) return categoryColors[d.data.name] || "#555";
+        return colorForNode(d);
+      });
+
+    // Reattach click after transition setup
+    merged.select("rect")
+      .style("cursor", isTopLevel ? "pointer" : "default")
+      .on("click", function (event, d) {
+        if (isTopLevel && d.children) {
+          zoomTo(d.data, [{ name: "Bundle" }, { name: d.data.name }]);
+        }
+      });
+
+    // Labels
+    merged.select(".label-name")
+      .transition(t)
+      .attr("x", d => d.x0 + 8)
+      .attr("y", d => d.y0 + 20)
+      .text(d => {
+        const w = d.x1 - d.x0;
+        const h = d.y1 - d.y0;
+        if (w < 50 || h < 30) return "";
+        return d.data.name;
+      });
+
+    merged.select(".label-size")
+      .transition(t)
+      .attr("x", d => d.x0 + 8)
+      .attr("y", d => d.y0 + 36)
+      .text(d => {
+        const w = d.x1 - d.x0;
+        const h = d.y1 - d.y0;
+        if (w < 50 || h < 44) return "";
+        const size = d.value;
+        return size + " KB";
+      });
+
+    // Tooltip
+    merged
+      .on("mousemove", function (event, d) {
+        const name = d.data.name;
+        const size = d.value;
+        tooltipEl.querySelector(".tip-name").textContent = name;
+        tooltipEl.querySelector(".tip-size").textContent = size + " KB";
+        tooltipEl.querySelector(".tip-pct").textContent = pctString(size) + " of total bundle";
+        tooltipEl.classList.add("visible");
+
+        let tx = event.clientX + 14;
+        let ty = event.clientY + 14;
+        const tw = tooltipEl.offsetWidth;
+        const th = tooltipEl.offsetHeight;
+        if (tx + tw > window.innerWidth - 8) tx = event.clientX - tw - 10;
+        if (ty + th > window.innerHeight - 8) ty = event.clientY - th - 10;
+        tooltipEl.style.left = tx + "px";
+        tooltipEl.style.top = ty + "px";
+      })
+      .on("mouseleave", function () {
+        tooltipEl.classList.remove("visible");
+      });
+  }
+
+  function zoomTo(root, path) {
+    if (!path) path = [{ name: "Bundle" }];
+    render(root, path);
+  }
+
+  // Initial render - top-level categories
+  zoomTo(data);
+
+  // Responsive
+  window.addEventListener("resize", () => {
+    const r = chartEl.getBoundingClientRect();
+    width = r.width || 960;
+    height = r.height || 600;
+    svg.attr("viewBox", `0 0 ${width} ${height}`);
+    if (currentRoot) render(currentRoot, currentRoot === data ? [{ name: "Bundle" }] : [{ name: "Bundle" }, { name: currentRoot.name }]);
+  });
+})();
+</script>
+</body>
+</html>

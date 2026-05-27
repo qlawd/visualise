@@ -1,0 +1,30 @@
+name: Gallery submission
+description: Propose a new visualization for the gallery
+labels: ["gallery", "triage"]
+body:
+  - type: input
+    id: viz-type
+    attributes:
+      label: Visualization type
+      placeholder: "force graph, sankey, treemap, etc."
+    validations:
+      required: true
+  - type: input
+    id: topic
+    attributes:
+      label: Topic
+      placeholder: "What does it visualize?"
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why this belongs in the gallery
+      description: "What does this example demonstrate that existing gallery items don't?"
+    validations:
+      required: true
+  - type: textarea
+    id: screenshot
+    attributes:
+      label: Screenshot
+      description: "Drag and drop a screenshot of the visualization"

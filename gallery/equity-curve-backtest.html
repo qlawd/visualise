@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Strategy Backtest — Equity Curve</title>
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<style>
+  *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 100%; height: 100%;
+    background: #0a0a0a; color: #e0e0e0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    overflow: hidden;
+  }
+  #container { display: flex; width: 100%; height: 100%; }
+  #chart-area { flex: 1; min-width: 0; display: flex; flex-direction: column; padding: 24px 16px 16px 16px; }
+  #header { padding: 0 0 12px 48px; }
+  #header h1 { font-size: 22px; font-weight: 600; color: #f0f0f0; letter-spacing: -0.3px; }
+  #header p { font-size: 13px; color: #777; margin-top: 2px; }
+  #charts { flex: 1; min-height: 0; }
+  #metrics-panel {
+    width: 220px; min-width: 220px;
+    background: #111; border-left: 1px solid #222;
+    padding: 28px 20px; display: flex; flex-direction: column; gap: 20px;
+    overflow-y: auto;
+  }
+  .metric { display: flex; flex-direction: column; gap: 2px; }
+  .metric-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.8px; color: #666; }
+  .metric-value { font-size: 20px; font-weight: 600; color: #e0e0e0; }
+  .metric-value.positive { color: #2dd4a8; }
+  .metric-value.negative { color: #e05252; }
+  .axis text { fill: #555; font-size: 11px; }
+  .axis path, .axis line { stroke: #222; }
+  .tooltip-box {
+    position: absolute; pointer-events: none;
+    background: rgba(17,17,17,0.94); border: 1px solid #333; border-radius: 6px;
+    padding: 10px 14px; font-size: 12px; line-height: 1.6;
+    color: #ccc; white-space: nowrap;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+  }
+  .tooltip-box .tt-label { color: #777; }
+  .tooltip-box .tt-val { color: #e0e0e0; font-weight: 500; }
+  .tooltip-box .tt-teal { color: #2dd4a8; }
+  .tooltip-box .tt-red { color: #e05252; }
+</style>
+</head>
+<body>
+<div id="container">
+  <div id="chart-area">
+    <div id="header">
+      <h1>Strategy Backtest</h1>
+      <p>Drag to zoom. Hover for details.</p>
+    </div>
+    <div id="charts"></div>
+  </div>
+  <div id="metrics-panel"></div>
+</div>
+<div class="tooltip-box" id="tooltip" style="display:none;"></div>
+
+<script>
+(function() {
+
+  // --- Deterministic PRNG (mulberry32) ---
+  function mulberry32(a) {
+    return function() {
+      a |= 0; a = a + 0x6D2B79F5 | 0;
+      var t = Math.imul(a ^ a >>> 15, 1 | a);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+  const rng = mulberry32(42);
+  function randNorm() {
+    let u = 0, v = 0;
+    while (u === 0) u = rng();
+    while (v === 0) v = rng();
+    return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
+  }
+
+  // --- Generate backtest data ---
+  const numDays = 200;
+  const startEquity = 100000;
+  const startDate = new Date(2024, 0, 2); // Jan 2, 2024
+
+  const data = [];
+  let equity = startEquity;
+  let peak = equity;
+  let totalTrades = 0;
+  let wins = 0;
+  let grossProfit = 0;
+  let grossLoss = 0;
+  const dailyReturns = [];
+
+  for (let i = 0; i < numDays; i++) {
+    const date = new Date(startDate);
+    date.setDate(date.getDate() + Math.floor(i * 7 / 5)); // skip weekends roughly
+
+    // Determine if a trade happens today (~70% of days)
+    const hasTrade = rng() < 0.70;
+    let tradeResult = null; // null | 'win' | 'loss'
+    let tradePnl = 0;
+
+    if (hasTrade) {
+      totalTrades++;
+      // Bias: create a drawdown region around day 80-100
+      let winProb = 0.55;
+      let avgWinMult = 1.0;
+      let avgLossMult = 1.0;
+      if (i >= 70 && i <= 110) {
+        winProb = 0.35;
+        avgLossMult = 1.4;
+      }
+      if (i >= 100 && i <= 140) {
+        winProb = 0.60; // recovery
+        avgWinMult = 1.2;
+      }
+
+      const isWin = rng() < winProb;
+      if (isWin) {
+        wins++;
+        // average win ~0.8% of equity, with some variance
+        const pct = (0.006 + Math.abs(randNorm()) * 0.004) * avgWinMult;
+        tradePnl = equity * pct;
+        grossProfit += tradePnl;
+        tradeResult = 'win';
+      } else {
+        // average loss ~0.53% of equity (1.5:1 ratio in normal regime)
+        const pct = (0.004 + Math.abs(randNorm()) * 0.003) * avgLossMult;
+        tradePnl = -equity * pct;
+        grossLoss += Math.abs(tradePnl);
+        tradeResult = 'loss';
+      }
+      equity += tradePnl;
+    }
+
+    // Small daily noise even without trade (market drift)
+    const noise = equity * randNorm() * 0.0008;
+    equity += noise;
+
+    const dailyReturn = data.length > 0 ? (equity - data[data.length - 1].equity) / data[data.length - 1].equity : 0;
+    dailyReturns.push(dailyReturn);
+
+    if (equity > peak) peak = equity;
+    const drawdown = (equity - peak) / peak;
+
+    data.push({
+      date,
+      day: i,
+      equity: Math.round(equity * 100) / 100,
+      peak,
+      drawdown,
+      drawdownPct: drawdown * 100,
+      tradeResult,
+      tradePnl: tradePnl ? Math.round(tradePnl * 100) / 100 : 0,
+      totalTrades,
+      winRate: totalTrades > 0 ? wins / totalTrades : 0
+    });
+  }
+
+  // --- Compute metrics ---
+  const finalEquity = data[data.length - 1].equity;
+  const totalReturn = ((finalEquity - startEquity) / startEquity) * 100;
+  const maxDrawdown = d3.min(data, d => d.drawdownPct);
+  const meanReturn = d3.mean(dailyReturns);
+  const stdReturn = d3.deviation(dailyReturns);
+  const sharpeRatio = stdReturn > 0 ? (meanReturn / stdReturn) * Math.sqrt(252) : 0;
+  const winRate = wins / totalTrades * 100;
+  const profitFactor = grossLoss > 0 ? grossProfit / grossLoss : Infinity;
+
+  // --- Render metrics panel ---
+  const metrics = [
+    { label: "Total Return", value: `${totalReturn >= 0 ? "+" : ""}${totalReturn.toFixed(1)}%`, cls: totalReturn >= 0 ? "positive" : "negative" },
+    { label: "Max Drawdown", value: `${maxDrawdown.toFixed(1)}%`, cls: "negative" },
+    { label: "Sharpe Ratio", value: sharpeRatio.toFixed(2), cls: sharpeRatio >= 1 ? "positive" : "" },
+    { label: "Win Rate", value: `${winRate.toFixed(1)}%`, cls: winRate >= 50 ? "positive" : "negative" },
+    { label: "Profit Factor", value: profitFactor.toFixed(2), cls: profitFactor >= 1 ? "positive" : "negative" },
+    { label: "Total Trades", value: totalTrades.toString(), cls: "" }
+  ];
+
+  const panel = d3.select("#metrics-panel");
+  panel.append("div").style("font-size","13px").style("font-weight","600")
+    .style("color","#888").style("text-transform","uppercase").style("letter-spacing","1px")
+    .style("margin-bottom","4px").text("Key Metrics");
+
+  metrics.forEach(m => {
+    const div = panel.append("div").attr("class","metric");
+    div.append("div").attr("class","metric-label").text(m.label);
+    div.append("div").attr("class",`metric-value ${m.cls}`).text(m.value);
+  });
+
+  // --- Chart dimensions ---
+  const margin = { top: 12, right: 20, bottom: 30, left: 64 };
+  const splitRatio = 0.72; // main chart gets 72% height
+
+  function render() {
+    const container = document.getElementById("charts");
+    const W = container.clientWidth;
+    const H = container.clientHeight;
+    if (W < 50 || H < 50) return;
+
+    const mainH = Math.floor(H * splitRatio);
+    const ddH = H - mainH;
+    const innerW = W - margin.left - margin.right;
+    const mainInnerH = mainH - margin.top - 8;
+    const ddInnerH = ddH - 8 - margin.bottom;
+
+    d3.select("#charts").selectAll("*").remove();
+
+    const svg = d3.select("#charts").append("svg")
+      .attr("width", W).attr("height", H);
+
+    // Clip path
+    svg.append("defs").append("clipPath").attr("id","clip")
+      .append("rect").attr("width", innerW).attr("height", mainInnerH);
+    svg.append("defs").append("clipPath").attr("id","clip-dd")
+      .append("rect").attr("width", innerW).attr("height", ddInnerH);
+
+    // Gradient for equity fill
+    const grad = svg.select("defs").append("linearGradient")
+      .attr("id","eqGrad").attr("x1","0").attr("y1","0").attr("x2","0").attr("y2","1");
+    grad.append("stop").attr("offset","0%").attr("stop-color","#2dd4a8").attr("stop-opacity",0.25);
+    grad.append("stop").attr("offset","100%").attr("stop-color","#2dd4a8").attr("stop-opacity",0.02);
+
+    // Gradient for drawdown fill
+    const ddGrad = svg.select("defs").append("linearGradient")
+      .attr("id","ddGrad").attr("x1","0").attr("y1","0").attr("x2","0").attr("y2","1");
+    ddGrad.append("stop").attr("offset","0%").attr("stop-color","#e05252").attr("stop-opacity",0.35);
+    ddGrad.append("stop").attr("offset","100%").attr("stop-color","#e05252").attr("stop-opacity",0.05);
+
+    // --- Scales ---
+    let currentData = data;
+
+    const x = d3.scaleTime().domain(d3.extent(data, d => d.date)).range([0, innerW]);
+    const xOrig = x.copy();
+    const y = d3.scaleLinear().domain([d3.min(data, d => d.equity) * 0.995, d3.max(data, d => d.equity) * 1.005]).range([mainInnerH, 0]).nice();
+    const yDD = d3.scaleLinear().domain([d3.min(data, d => d.drawdownPct) * 1.1, 0]).range([ddInnerH, 0]).nice();
+
+    // === Main chart group ===
+    const gMain = svg.append("g").attr("transform", `translate(${margin.left},${margin.top})`);
+
+    // Grid lines
+    gMain.append("g").attr("class","grid")
+      .selectAll("line").data(y.ticks(5)).join("line")
+      .attr("x1",0).attr("x2",innerW).attr("y1",d=>y(d)).attr("y2",d=>y(d))
+      .attr("stroke","#1a1a1a").attr("stroke-dasharray","2,3");
+
+    // Y axis
+    gMain.append("g").attr("class","axis")
+      .call(d3.axisLeft(y).ticks(5).tickFormat(d => `$${d3.format(",.0f")(d)}`).tickSize(-innerW))
+      .call(g => g.selectAll(".tick line").attr("stroke","#1a1a1a").attr("stroke-dasharray","2,3"))
+      .call(g => g.select(".domain").remove());
+
+    // Clipped content
+    const mainClip = gMain.append("g").attr("clip-path","url(#clip)");
+
+    // Equity area
+    const area = d3.area().x(d => x(d.date)).y0(mainInnerH).y1(d => y(d.equity)).curve(d3.curveMonotoneX);
+    mainClip.append("path").datum(data).attr("d", area).attr("fill","url(#eqGrad)");
+
+    // Equity line
+    const line = d3.line().x(d => x(d.date)).y(d => y(d.equity)).curve(d3.curveMonotoneX);
+    mainClip.append("path").datum(data).attr("d", line)
+      .attr("fill","none").attr("stroke","#2dd4a8").attr("stroke-width",2);
+
+    // Trade markers
+    const trades = data.filter(d => d.tradeResult);
+    mainClip.selectAll(".trade-dot").data(trades).join("circle")
+      .attr("class","trade-dot")
+      .attr("cx", d => x(d.date)).attr("cy", d => y(d.equity)).attr("r", 3)
+      .attr("fill", d => d.tradeResult === 'win' ? '#34d399' : '#ef4444')
+      .attr("opacity", 0.8);
+
+    // === Drawdown chart ===
+    const gDD = svg.append("g").attr("transform", `translate(${margin.left},${mainH + 8})`);
+
+    // Y axis
+    gDD.append("g").attr("class","axis")
+      .call(d3.axisLeft(yDD).ticks(4).tickFormat(d => `${d.toFixed(0)}%`).tickSize(-innerW))
+      .call(g => g.selectAll(".tick line").attr("stroke","#1a1a1a").attr("stroke-dasharray","2,3"))
+      .call(g => g.select(".domain").remove());
+
+    const ddClip = gDD.append("g").attr("clip-path","url(#clip-dd)");
+
+    // Drawdown area
+    const ddArea = d3.area().x(d => x(d.date)).y0(yDD(0)).y1(d => yDD(d.drawdownPct)).curve(d3.curveMonotoneX);
+    ddClip.append("path").datum(data).attr("d", ddArea).attr("fill","url(#ddGrad)");
+
+    // Drawdown line
+    const ddLine = d3.line().x(d => x(d.date)).y(d => yDD(d.drawdownPct)).curve(d3.curveMonotoneX);
+    ddClip.append("path").datum(data).attr("d", ddLine)
+      .attr("fill","none").attr("stroke","#e05252").attr("stroke-width",1.5).attr("opacity",0.7);
+
+    // X axis on drawdown chart
+    gDD.append("g").attr("class","axis").attr("transform",`translate(0,${ddInnerH})`)
+      .call(d3.axisBottom(x).ticks(d3.timeMonth.every(1)).tickFormat(d3.timeFormat("%b %Y")))
+      .call(g => g.select(".domain").attr("stroke","#222"));
+
+    // === Crosshair & Tooltip ===
+    const crossV = svg.append("line")
+      .attr("stroke","#555").attr("stroke-width",1).attr("stroke-dasharray","3,3")
+      .attr("y1", margin.top).attr("y2", H - margin.bottom).style("display","none");
+
+    const hDotMain = svg.append("circle").attr("r",4).attr("fill","#2dd4a8")
+      .attr("stroke","#0a0a0a").attr("stroke-width",2).style("display","none");
+    const hDotDD = svg.append("circle").attr("r",3.5).attr("fill","#e05252")
+      .attr("stroke","#0a0a0a").attr("stroke-width",2).style("display","none");
+
+    const tooltip = d3.select("#tooltip");
+    const bisect = d3.bisector(d => d.date).left;
+
+    function onPointerMove(event) {
+      const [mx] = d3.pointer(event, svg.node());
+      const px = mx - margin.left;
+      if (px < 0 || px > innerW) { hideTooltip(); return; }
+
+      const dateAtPointer = x.invert(px);
+      let idx = bisect(data, dateAtPointer, 1);
+      if (idx >= data.length) idx = data.length - 1;
+      if (idx > 0) {
+        const d0 = data[idx - 1], d1 = data[idx];
+        idx = (dateAtPointer - d0.date > d1.date - dateAtPointer) ? idx : idx - 1;
+      }
+      const d = data[idx];
+      const cx = x(d.date) + margin.left;
+
+      crossV.attr("x1", cx).attr("x2", cx).style("display", null);
+      hDotMain.attr("cx", cx).attr("cy", y(d.equity) + margin.top).style("display", null);
+      hDotDD.attr("cx", cx).attr("cy", yDD(d.drawdownPct) + mainH + 8).style("display", null);
+
+      const fmt = d3.timeFormat("%b %d, %Y");
+      tooltip.style("display", "block").html(
+        `<span class="tt-label">Date</span> <span class="tt-val">${fmt(d.date)}</span><br>` +
+        `<span class="tt-label">Equity</span> <span class="tt-teal">$${d3.format(",.0f")(d.equity)}</span><br>` +
+        `<span class="tt-label">Drawdown</span> <span class="tt-red">${d.drawdownPct.toFixed(2)}%</span><br>` +
+        `<span class="tt-label">Trades</span> <span class="tt-val">${d.totalTrades}</span><br>` +
+        `<span class="tt-label">Win Rate</span> <span class="tt-val">${(d.winRate * 100).toFixed(1)}%</span>`
+      );
+
+      const ttNode = tooltip.node();
+      let tx = cx + 16, ty = event.clientY - 60;
+      if (tx + ttNode.offsetWidth > window.innerWidth - 230) tx = cx - ttNode.offsetWidth - 16;
+      if (ty < 4) ty = 4;
+      tooltip.style("left", tx + "px").style("top", ty + "px");
+    }
+
+    function hideTooltip() {
+      crossV.style("display","none");
+      hDotMain.style("display","none");
+      hDotDD.style("display","none");
+      tooltip.style("display","none");
+    }
+
+    // === Brush / Zoom ===
+    const brush = d3.brushX()
+      .extent([[0, 0], [innerW, mainInnerH]])
+      .on("end", function(event) {
+        if (!event.selection) return;
+        const [x0, x1] = event.selection.map(x.invert);
+        x.domain([x0, x1]);
+        updateCharts();
+        gMain.select(".brush").call(brush.move, null); // clear brush rect
+      });
+
+    gMain.append("g").attr("class","brush").call(brush)
+      .selectAll("rect").attr("fill","rgba(45,212,168,0.08)").attr("rx",2);
+
+    // Double-click to reset
+    svg.on("dblclick", function() {
+      x.domain(xOrig.domain());
+      updateCharts();
+    });
+
+    function updateCharts() {
+      // Update y domains based on visible data
+      const visData = data.filter(d => d.date >= x.domain()[0] && d.date <= x.domain()[1]);
+      if (visData.length < 2) return;
+      y.domain([d3.min(visData, d => d.equity) * 0.998, d3.max(visData, d => d.equity) * 1.002]).nice();
+      yDD.domain([d3.min(visData, d => d.drawdownPct) * 1.1, 0]).nice();
+
+      // Transitions
+      const t = svg.transition().duration(400);
+
+      mainClip.select("path:nth-child(1)").transition(t).attr("d", area(data));
+      mainClip.select("path:nth-child(2)").transition(t).attr("d", line(data));
+      mainClip.selectAll(".trade-dot").transition(t)
+        .attr("cx", d => x(d.date)).attr("cy", d => y(d.equity));
+
+      gMain.select(".axis").transition(t)
+        .call(d3.axisLeft(y).ticks(5).tickFormat(d => `$${d3.format(",.0f")(d)}`).tickSize(-innerW))
+        .call(g => g.selectAll(".tick line").attr("stroke","#1a1a1a").attr("stroke-dasharray","2,3"))
+        .call(g => g.select(".domain").remove());
+
+      ddClip.select("path:nth-child(1)").transition(t).attr("d", ddArea(data));
+      ddClip.select("path:nth-child(2)").transition(t).attr("d", ddLine(data));
+
+      gDD.select(".axis:last-child").transition(t)
+        .call(d3.axisBottom(x).ticks(d3.timeMonth.every(1)).tickFormat(d3.timeFormat("%b %Y")));
+      gDD.select(".axis:first-child").transition(t)
+        .call(d3.axisLeft(yDD).ticks(4).tickFormat(d => `${d.toFixed(0)}%`).tickSize(-innerW))
+        .call(g => g.selectAll(".tick line").attr("stroke","#1a1a1a").attr("stroke-dasharray","2,3"))
+        .call(g => g.select(".domain").remove());
+    }
+
+    // Overlay for pointer events
+    svg.append("rect")
+      .attr("width", W).attr("height", H)
+      .attr("fill","none").attr("pointer-events","all")
+      .on("pointermove", onPointerMove)
+      .on("pointerleave", hideTooltip);
+  }
+
+  render();
+
+  let resizeTimer;
+  window.addEventListener("resize", () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(render, 120);
+  });
+
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Engineering Tradeoffs - Parallel Coordinates</title>
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<style>
+  *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0a0a0a;
+    color: #e0e0e0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+    padding: 24px;
+    overflow-x: hidden;
+  }
+  h1 {
+    font-size: 28px;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+    margin-bottom: 4px;
+    color: #ffffff;
+  }
+  .subtitle {
+    font-size: 14px;
+    color: #888;
+    margin-bottom: 20px;
+  }
+  #chart {
+    width: 100%;
+    max-width: 1100px;
+  }
+  svg {
+    width: 100%;
+    height: auto;
+  }
+  .axis-label {
+    font-size: 12px;
+    fill: #aaa;
+    text-anchor: middle;
+    font-weight: 600;
+  }
+  .tick text {
+    fill: #888;
+    font-size: 10px;
+  }
+  .tick line {
+    stroke: #333;
+  }
+  .domain {
+    stroke: #444;
+  }
+  .line {
+    fill: none;
+    stroke-width: 2;
+    opacity: 0.55;
+    cursor: pointer;
+    transition: opacity 0.15s;
+  }
+  .line.faded {
+    opacity: 0.08;
+  }
+  .line.highlighted {
+    opacity: 1;
+    stroke-width: 3.5;
+    filter: drop-shadow(0 0 4px rgba(255,255,255,0.15));
+  }
+  .line.pinned {
+    opacity: 1;
+    stroke-width: 3.5;
+    filter: drop-shadow(0 0 6px rgba(255,255,255,0.2));
+  }
+  .brush .selection {
+    fill: rgba(255, 255, 255, 0.12);
+    stroke: #888;
+    stroke-width: 1;
+  }
+  .tooltip {
+    position: absolute;
+    pointer-events: none;
+    background: #1a1a1a;
+    border: 1px solid #444;
+    border-radius: 6px;
+    padding: 10px 14px;
+    font-size: 12px;
+    line-height: 1.6;
+    color: #e0e0e0;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+    opacity: 0;
+    transition: opacity 0.15s;
+    z-index: 10;
+    max-width: 260px;
+  }
+  .tooltip.visible { opacity: 1; }
+  .tooltip .tt-name {
+    font-weight: 700;
+    font-size: 13px;
+    margin-bottom: 4px;
+  }
+  .tooltip .tt-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+  }
+  .tooltip .tt-label { color: #888; }
+  .tooltip .tt-value { font-weight: 600; }
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 16px 24px;
+    margin-top: 16px;
+    max-width: 1100px;
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: #ccc;
+    cursor: pointer;
+    user-select: none;
+    transition: opacity 0.15s;
+  }
+  .legend-item:hover { opacity: 0.8; }
+  .legend-swatch {
+    width: 14px;
+    height: 3px;
+    border-radius: 2px;
+  }
+</style>
+</head>
+<body>
+<h1>Engineering Tradeoffs</h1>
+<p class="subtitle">Brush an axis to filter. Hover to compare.</p>
+<div id="chart"></div>
+<div class="legend" id="legend"></div>
+<div class="tooltip" id="tooltip"></div>
+
+<script>
+(function() {
+  // --- Data ---
+  const technologies = [
+    { name: "Monolith (Rails)",      color: "#f472b6", latency: 25,  cost: 500,  reliability: 99.5,  complexity: 3, teamSize: 4,  timeToShip: 3   },
+    { name: "Microservices (K8s)",   color: "#60a5fa", latency: 80,  cost: 8000, reliability: 99.95, complexity: 9, teamSize: 15, timeToShip: 20  },
+    { name: "Serverless (Lambda)",   color: "#34d399", latency: 150, cost: 2000, reliability: 99.9,  complexity: 5, teamSize: 3,  timeToShip: 2   },
+    { name: "Edge Workers (CF)",     color: "#fbbf24", latency: 8,   cost: 300,  reliability: 98,    complexity: 5, teamSize: 3,  timeToShip: 2   },
+    { name: "Self-hosted VM",        color: "#a78bfa", latency: 15,  cost: 200,  reliability: 97,    complexity: 2, teamSize: 2,  timeToShip: 1   },
+    { name: "PaaS (Heroku)",         color: "#fb923c", latency: 60,  cost: 1500, reliability: 99,    complexity: 2, teamSize: 1,  timeToShip: 1   },
+    { name: "Event-Driven (Kafka)",  color: "#f87171", latency: 100, cost: 7000, reliability: 99.99, complexity: 8, teamSize: 12, timeToShip: 20  },
+    { name: "Hybrid (Mono+Lambda)", color: "#22d3ee", latency: 30,  cost: 1500, reliability: 99.7,  complexity: 5, teamSize: 6,  timeToShip: 8   },
+  ];
+
+  // Axes config: key, label, domain [low, high], and whether to invert (better=up)
+  // For "better=up": lower latency = better so invert, lower cost = better so invert,
+  // higher reliability = better so normal, lower complexity = better so invert,
+  // lower team size = better so invert, lower time to ship = better so invert
+  const axes = [
+    { key: "latency",     label: "Latency",      domain: [5, 500],    invert: true,  fmt: v => v + " ms" },
+    { key: "cost",        label: "Cost",          domain: [100, 10000], invert: true,  fmt: v => "$" + d3.format(",")(v) + "/mo" },
+    { key: "reliability", label: "Reliability",   domain: [95, 99.99], invert: false, fmt: v => v + "%" },
+    { key: "complexity",  label: "Complexity",    domain: [1, 10],     invert: true,  fmt: v => v + "/10" },
+    { key: "teamSize",    label: "Team Size",     domain: [1, 20],     invert: true,  fmt: v => v + " ppl" },
+    { key: "timeToShip",  label: "Time to Ship",  domain: [1, 24],     invert: true,  fmt: v => {
+      if (v < 4) return v + " wk";
+      return Math.round(v / 4) + " mo";
+    }},
+  ];
+
+  // --- Layout ---
+  const margin = { top: 50, right: 40, bottom: 20, left: 40 };
+  const width = 1100;
+  const height = 480;
+  const innerW = width - margin.left - margin.right;
+  const innerH = height - margin.top - margin.bottom;
+
+  const svg = d3.select("#chart")
+    .append("svg")
+    .attr("viewBox", `0 0 ${width} ${height}`)
+    .attr("preserveAspectRatio", "xMidYMid meet");
+
+  const g = svg.append("g")
+    .attr("transform", `translate(${margin.left},${margin.top})`);
+
+  // --- Scales ---
+  const xScale = d3.scalePoint()
+    .domain(axes.map(a => a.key))
+    .range([0, innerW])
+    .padding(0.08);
+
+  const yScales = {};
+  axes.forEach(axis => {
+    const [lo, hi] = axis.domain;
+    if (axis.invert) {
+      // Better = up, so high values (bad) at bottom, low values (good) at top
+      yScales[axis.key] = d3.scaleLinear().domain([lo, hi]).range([0, innerH]);
+    } else {
+      // Better = up, so high values (good) at top
+      yScales[axis.key] = d3.scaleLinear().domain([lo, hi]).range([innerH, 0]);
+    }
+  });
+
+  // --- Path generator ---
+  function path(d) {
+    return d3.line()(axes.map(axis => [xScale(axis.key), yScales[axis.key](d[axis.key])]));
+  }
+
+  // --- Draw lines ---
+  const linesG = g.append("g").attr("class", "lines");
+
+  const lines = linesG.selectAll(".line")
+    .data(technologies)
+    .join("path")
+    .attr("class", "line")
+    .attr("d", path)
+    .attr("stroke", d => d.color);
+
+  // --- Draw axes ---
+  const brushes = {};
+  const brushSelections = {};
+
+  const axisGs = g.selectAll(".axis-g")
+    .data(axes)
+    .join("g")
+    .attr("class", "axis-g")
+    .attr("transform", d => `translate(${xScale(d.key)},0)`);
+
+  axisGs.each(function(axisData) {
+    const axisG = d3.select(this);
+    const scale = yScales[axisData.key];
+
+    // Create d3 axis — for inverted we need to show ticks correctly
+    let tickValues;
+    const [lo, hi] = axisData.domain;
+    if (axisData.key === "reliability") {
+      tickValues = [95, 96, 97, 98, 99, 99.5, 99.9, 99.95, 99.99];
+    } else if (axisData.key === "timeToShip") {
+      tickValues = [1, 2, 4, 8, 12, 16, 20, 24];
+    } else {
+      tickValues = null;
+    }
+
+    const axis = d3.axisLeft(scale)
+      .tickSize(5)
+      .tickFormat(axisData.fmt);
+
+    if (tickValues) axis.tickValues(tickValues);
+    else axis.ticks(6);
+
+    axisG.call(axis);
+
+    // Axis label
+    axisG.append("text")
+      .attr("class", "axis-label")
+      .attr("y", -16)
+      .text(axisData.label);
+
+    // Brush
+    const brush = d3.brushY()
+      .extent([[-12, 0], [12, innerH]])
+      .on("brush end", function(event) {
+        brushHandler(axisData.key, event.selection);
+      });
+
+    brushes[axisData.key] = brush;
+    axisG.append("g")
+      .attr("class", "brush")
+      .call(brush);
+  });
+
+  function brushHandler(key, selection) {
+    if (selection) {
+      brushSelections[key] = selection;
+    } else {
+      delete brushSelections[key];
+    }
+    applyFilters();
+  }
+
+  function applyFilters() {
+    const activeKeys = Object.keys(brushSelections);
+    if (activeKeys.length === 0) {
+      lines.classed("faded", false);
+      return;
+    }
+    lines.classed("faded", d => {
+      return activeKeys.some(key => {
+        const [y0, y1] = brushSelections[key]; // pixel coords (top to bottom)
+        const val = yScales[key](d[key]);
+        return val < y0 || val > y1;
+      });
+    });
+  }
+
+  // --- Tooltip ---
+  const tooltip = d3.select("#tooltip");
+  let pinned = null;
+
+  function showTooltip(event, d) {
+    const rows = axes.map(a =>
+      `<div class="tt-row"><span class="tt-label">${a.label}</span><span class="tt-value">${a.fmt(d[a.key])}</span></div>`
+    ).join("");
+    tooltip.html(
+      `<div class="tt-name" style="color:${d.color}">${d.name}</div>${rows}`
+    );
+    tooltip.classed("visible", true);
+    positionTooltip(event);
+  }
+
+  function positionTooltip(event) {
+    const ttNode = tooltip.node();
+    const rect = ttNode.getBoundingClientRect();
+    let x = event.pageX + 14;
+    let y = event.pageY - 14;
+    if (x + rect.width > window.innerWidth - 10) x = event.pageX - rect.width - 14;
+    if (y + rect.height > window.innerHeight - 10) y = event.pageY - rect.height - 14;
+    tooltip.style("left", x + "px").style("top", y + "px");
+  }
+
+  function hideTooltip() {
+    tooltip.classed("visible", false);
+  }
+
+  // --- Hover & Click ---
+  lines
+    .on("mouseenter", function(event, d) {
+      if (pinned && pinned !== d) return;
+      d3.select(this).classed("highlighted", true).raise();
+      showTooltip(event, d);
+    })
+    .on("mousemove", function(event, d) {
+      if (pinned && pinned !== d) return;
+      positionTooltip(event);
+    })
+    .on("mouseleave", function(event, d) {
+      if (pinned === d) return;
+      d3.select(this).classed("highlighted", false);
+      hideTooltip();
+    })
+    .on("click", function(event, d) {
+      event.stopPropagation();
+      if (pinned === d) {
+        // Unpin
+        pinned = null;
+        lines.classed("pinned", false).classed("highlighted", false);
+        hideTooltip();
+      } else {
+        // Pin this one
+        pinned = d;
+        lines.classed("pinned", false).classed("highlighted", false);
+        d3.select(this).classed("pinned", true).raise();
+        showTooltip(event, d);
+      }
+    });
+
+  // Click background to unpin
+  svg.on("click", function() {
+    if (pinned) {
+      pinned = null;
+      lines.classed("pinned", false).classed("highlighted", false);
+      hideTooltip();
+    }
+  });
+
+  // --- Legend ---
+  const legend = d3.select("#legend");
+  technologies.forEach(tech => {
+    const item = legend.append("div").attr("class", "legend-item");
+    item.append("div")
+      .attr("class", "legend-swatch")
+      .style("background", tech.color);
+    item.append("span").text(tech.name);
+    item.on("mouseenter", function() {
+      lines.classed("highlighted", d => d === tech);
+      lines.filter(d => d !== tech).classed("faded", true);
+      lines.filter(d => d === tech).raise();
+    });
+    item.on("mouseleave", function() {
+      lines.classed("highlighted", false);
+      if (Object.keys(brushSelections).length === 0) {
+        lines.classed("faded", false);
+      } else {
+        applyFilters();
+      }
+    });
+  });
+
+})();
+</script>
+</body>
+</html>

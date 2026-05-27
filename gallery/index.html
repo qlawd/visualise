@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>visualise — Gallery</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #0a0a0a; color: #e0e0e0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; line-height: 1.6; padding: 2rem 1.5rem; max-width: 1100px; margin: 0 auto; }
+  a { color: inherit; text-decoration: none; }
+  header { text-align: center; margin-bottom: 3rem; }
+  h1 { font-size: 3.2rem; font-weight: 700; color: #fff; letter-spacing: -1px; margin-bottom: 0.25rem; }
+  .tagline { font-size: 1.15rem; color: #888; margin-bottom: 0.5rem; }
+  .oneliner { font-size: 0.95rem; color: #777; max-width: 540px; margin: 0 auto 1.25rem; }
+  .install { background: #161616; border: 1px solid #2a2a2a; border-radius: 8px; padding: 0.65rem 1.1rem; font-family: 'SF Mono', SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace; font-size: 0.85rem; color: #ccc; display: inline-block; margin-bottom: 1rem; word-break: break-all; }
+  .gh-link { display: inline-block; font-size: 0.9rem; color: #888; border: 1px solid #333; border-radius: 6px; padding: 0.4rem 1rem; transition: border-color 0.2s; }
+  .gh-link:hover { border-color: #666; color: #bbb; }
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.25rem; }
+  @media (max-width: 820px) { .grid { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 520px) { .grid { grid-template-columns: 1fr; } h1 { font-size: 2.4rem; } }
+  .card { background: #111; border: 1px solid #222; border-radius: 8px; padding: 1.25rem; display: flex; flex-direction: column; gap: 0.5rem; transition: transform 0.2s, border-color 0.3s, box-shadow 0.3s; }
+  .card:hover { transform: translateY(-3px); border-color: var(--accent); box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 25%, transparent); }
+  .badge { font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; padding: 0.2rem 0.6rem; border-radius: 20px; width: fit-content; background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--accent); }
+  .card h2 { font-size: 1.05rem; font-weight: 600; color: #fff; }
+  .card p { font-size: 0.85rem; color: #888; flex: 1; }
+  .open { font-size: 0.82rem; font-weight: 500; color: var(--accent); opacity: 0.8; transition: opacity 0.2s; }
+  .card:hover .open { opacity: 1; }
+  footer { text-align: center; margin-top: 3rem; padding-top: 1.5rem; border-top: 1px solid #1a1a1a; font-size: 0.82rem; color: #555; }
+  footer a { color: #777; text-decoration: underline; text-underline-offset: 2px; }
+  footer a:hover { color: #aaa; }
+</style>
+</head>
+<body>
+<header>
+  <h1>visualise</h1>
+  <div class="tagline">Type /visualise. See it.</div>
+  <div class="oneliner">A Claude Code skill that generates interactive HTML visualizations on demand.</div>
+  <div class="install">git clone https://github.com/qlawd/visualise ~/.claude/skills/visualise</div><br><br>
+  <a href="https://github.com/qlawd/visualise" class="gh-link">GitHub &rarr;</a>
+</header>
+<div class="grid">
+  <a href="force-graph-microservices.html" class="card" style="--accent:#2dd4bf">
+    <span class="badge">Force-directed graph</span>
+    <h2>Microservice Architecture</h2>
+    <p>12 services, click to trace dependencies</p>
+    <span class="open">Open &rarr;</span>
+  </a>
+  <a href="sankey-data-pipeline.html" class="card" style="--accent:#f97066">
+    <span class="badge">Sankey diagram</span>
+    <h2>Data Pipeline</h2>
+    <p>Follow data from source to consumer</p>
+    <span class="open">Open &rarr;</span>
+  </a>
+  <a href="state-diagram-git-flow.html" class="card" style="--accent:#a78bfa">
+    <span class="badge">State diagram</span>
+    <h2>Git Flow</h2>
+    <p>Animated commits flowing through branches</p>
+    <span class="open">Open &rarr;</span>
+  </a>
+  <a href="treemap-bundle-size.html" class="card" style="--accent:#fbbf24">
+    <span class="badge">Treemap</span>
+    <h2>Bundle Size Analysis</h2>
+    <p>Click categories to zoom in</p>
+    <span class="open">Open &rarr;</span>
+  </a>
+  <a href="equity-curve-backtest.html" class="card" style="--accent:#34d399">
+    <span class="badge">Equity curve</span>
+    <h2>Strategy Backtest</h2>
+    <p>Drag to zoom, hover for metrics</p>
+    <span class="open">Open &rarr;</span>
+  </a>
+  <a href="heatmap-correlation-matrix.html" class="card" style="--accent:#fca5a1">
+    <span class="badge">Heatmap</span>
+    <h2>Correlation Matrix</h2>
+    <p>Click cells for scatter plots</p>
+    <span class="open">Open &rarr;</span>
+  </a>
+  <a href="radial-tree-file-system.html" class="card" style="--accent:#22d3ee">
+    <span class="badge">Radial tree</span>
+    <h2>Project Structure</h2>
+    <p>Expand and collapse directories</p>
+    <span class="open">Open &rarr;</span>
+  </a>
+  <a href="parallel-coordinates-tradeoffs.html" class="card" style="--accent:#ef4444">
+    <span class="badge">Parallel coordinates</span>
+    <h2>Engineering Tradeoffs</h2>
+    <p>Brush axes to filter options</p>
+    <span class="open">Open &rarr;</span>
+  </a>
+</div>
+<footer>Built by <a href="https://github.com/qlawd">Swathi</a> &middot; <a href="https://github.com/qlawd/visualise">GitHub</a> &middot; Apache 2.0</footer>
+</body>
+</html>

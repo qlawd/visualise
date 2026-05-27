@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Data Pipeline - Sankey Diagram</title>
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<style>
+  *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0a0a0a;
+    color: #e0e0e0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+    padding: 24px;
+    overflow-x: hidden;
+  }
+  h1 {
+    font-size: 28px;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+    margin-bottom: 4px;
+    color: #ffffff;
+  }
+  .subtitle {
+    font-size: 14px;
+    color: #888;
+    margin-bottom: 20px;
+  }
+  #chart {
+    width: 100%;
+    max-width: 1200px;
+  }
+  svg {
+    width: 100%;
+    height: auto;
+    display: block;
+  }
+  .tooltip {
+    position: fixed;
+    pointer-events: none;
+    background: #1a1a2e;
+    border: 1px solid #333;
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 13px;
+    color: #e0e0e0;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.6);
+    opacity: 0;
+    transition: opacity 0.15s;
+    z-index: 100;
+    max-width: 260px;
+    line-height: 1.5;
+  }
+  .tooltip .label { font-weight: 600; color: #fff; }
+  .tooltip .value { color: #aaa; }
+</style>
+</head>
+<body>
+
+<h1>Data Pipeline</h1>
+<p class="subtitle">Hover over flows or nodes to explore throughput and data paths</p>
+<div id="chart"></div>
+<div class="tooltip" id="tooltip"></div>
+
+<script>
+(function() {
+
+  // ---------- DATA ----------
+  const nodes = [
+    // Stage 0: Sources
+    { id: "kafka",        name: "Kafka",             stage: 0, value: 40 },
+    { id: "rest_api",     name: "REST API",          stage: 0, value: 25 },
+    { id: "s3",           name: "S3 Bucket",         stage: 0, value: 20 },
+    { id: "webhooks",     name: "Webhooks",          stage: 0, value: 15 },
+    // Stage 1: Ingestion
+    { id: "raw_events",   name: "Raw Events",        stage: 1, value: 100 },
+    // Stage 2: Validation
+    { id: "schema_valid", name: "Schema Validation",  stage: 2, value: 100 },
+    // Stage 3: Valid / Invalid
+    { id: "valid",        name: "Valid Events",       stage: 3, value: 85 },
+    { id: "dlq",          name: "Dead Letter Queue",  stage: 3, value: 15 },
+    // Stage 4: Enrichment
+    { id: "enrichment",   name: "Enrichment",        stage: 4, value: 85 },
+    // Stage 5: Dedup
+    { id: "dedup",        name: "Deduplication",     stage: 5, value: 85 },
+    // Stage 6: Storage
+    { id: "data_lake",    name: "Data Lake",         stage: 6, value: 40 },
+    { id: "realtime",     name: "Real-time Index",   stage: 6, value: 25 },
+    { id: "aggregated",   name: "Aggregated Metrics", stage: 6, value: 20 },
+    // Stage 7: Consumers
+    { id: "dashboard",    name: "Dashboard",         stage: 7, value: 22 },
+    { id: "ml_pipeline",  name: "ML Pipeline",       stage: 7, value: 25 },
+    { id: "alerts",       name: "Alerts",            stage: 7, value: 18 },
+    { id: "data_export",  name: "Data Export",       stage: 7, value: 20 },
+  ];
+
+  const links = [
+    // Sources → Raw Events
+    { source: "kafka",        target: "raw_events",    value: 40 },
+    { source: "rest_api",     target: "raw_events",    value: 25 },
+    { source: "s3",           target: "raw_events",    value: 20 },
+    { source: "webhooks",     target: "raw_events",    value: 15 },
+    // Raw Events → Schema Validation
+    { source: "raw_events",   target: "schema_valid",  value: 100 },
+    // Schema Validation → Valid / DLQ
+    { source: "schema_valid", target: "valid",         value: 85 },
+    { source: "schema_valid", target: "dlq",           value: 15 },
+    // Valid → Enrichment
+    { source: "valid",        target: "enrichment",    value: 85 },
+    // Enrichment → Dedup
+    { source: "enrichment",   target: "dedup",         value: 85 },
+    // Dedup → Storage
+    { source: "dedup",        target: "data_lake",     value: 40 },
+    { source: "dedup",        target: "realtime",      value: 25 },
+    { source: "dedup",        target: "aggregated",    value: 20 },
+    // Storage → Consumers
+    { source: "data_lake",    target: "dashboard",     value: 12 },
+    { source: "data_lake",    target: "ml_pipeline",   value: 18 },
+    { source: "data_lake",    target: "data_export",   value: 10 },
+    { source: "realtime",     target: "dashboard",     value: 10 },
+    { source: "realtime",     target: "alerts",        value: 15 },
+    { source: "aggregated",   target: "ml_pipeline",   value: 7 },
+    { source: "aggregated",   target: "alerts",        value: 3 },
+    { source: "aggregated",   target: "data_export",   value: 10 },
+  ];
+
+  // ---------- STAGE COLORS ----------
+  const stageColors = {
+    0: "#4fc3f7", // Sources - light blue
+    1: "#7c4dff", // Raw Events - purple
+    2: "#ff8a65", // Validation - orange
+    3: "#66bb6a", // Valid / DLQ
+    4: "#ab47bc", // Enrichment - magenta
+    5: "#29b6f6", // Dedup - cyan
+    6: "#ffa726", // Storage - amber
+    7: "#ef5350", // Consumers - red
+  };
+
+  // DLQ gets a special red
+  function nodeColor(d) {
+    if (d.id === "dlq") return "#e53935";
+    return stageColors[d.stage] || "#888";
+  }
+
+  function linkColor(d) {
+    const src = nodeMap.get(d.source);
+    if (d.target === "dlq") return "rgba(229,57,53,0.35)";
+    return d3.color(stageColors[src.stage]).copy({opacity: 0.25}).toString();
+  }
+
+  function linkColorHighlight(d) {
+    const src = nodeMap.get(d.source);
+    if (d.target === "dlq") return "rgba(229,57,53,0.7)";
+    return d3.color(stageColors[src.stage]).copy({opacity: 0.55}).toString();
+  }
+
+  // Build node map
+  const nodeMap = new Map(nodes.map(n => [n.id, n]));
+
+  // ---------- LAYOUT ----------
+  const margin = { top: 20, right: 30, bottom: 20, left: 30 };
+  const width = 1200;
+  const height = 600;
+  const innerW = width - margin.left - margin.right;
+  const innerH = height - margin.top - margin.bottom;
+
+  const stages = d3.groups(nodes, d => d.stage).sort((a,b) => a[0] - b[0]);
+  const numStages = stages.length;
+  const nodeWidth = 18;
+  const nodePadding = 16;
+
+  // X positions by stage
+  stages.forEach(([stage, group]) => {
+    const x = margin.left + (stage / (numStages - 1)) * (innerW - nodeWidth);
+    group.forEach(n => { n.x0 = x; n.x1 = x + nodeWidth; });
+  });
+
+  // Compute total value for each node
+  nodes.forEach(n => {
+    const incoming = links.filter(l => l.target === n.id).reduce((s,l) => s + l.value, 0);
+    const outgoing = links.filter(l => l.source === n.id).reduce((s,l) => s + l.value, 0);
+    n.totalValue = Math.max(incoming, outgoing, n.value || 0);
+  });
+
+  // Y positions: center each stage's nodes vertically
+  const valueScale = innerH / 140; // scale factor for value→pixels
+
+  stages.forEach(([stage, group]) => {
+    const totalH = group.reduce((s,n) => s + n.totalValue * valueScale, 0) + (group.length - 1) * nodePadding;
+    let y = margin.top + (innerH - totalH) / 2;
+    group.forEach(n => {
+      n.y0 = y;
+      n.height = n.totalValue * valueScale;
+      n.y1 = y + n.height;
+      y += n.height + nodePadding;
+    });
+  });
+
+  // Compute link thicknesses and y-offsets
+  // For each node, track source-side and target-side offsets
+  const sourceOffsets = new Map(nodes.map(n => [n.id, 0]));
+  const targetOffsets = new Map(nodes.map(n => [n.id, 0]));
+
+  // Sort links by target position for nicer routing
+  links.sort((a,b) => {
+    const an = nodeMap.get(a.target), bn = nodeMap.get(b.target);
+    return (an.y0 + an.y1)/2 - (bn.y0 + bn.y1)/2;
+  });
+
+  // For each source, allocate links in order of target y
+  const linksBySource = d3.groups(links, d => d.source);
+  linksBySource.forEach(([src, grp]) => {
+    grp.sort((a,b) => {
+      const an = nodeMap.get(a.target), bn = nodeMap.get(b.target);
+      return (an.y0 + an.y1)/2 - (bn.y0 + bn.y1)/2;
+    });
+  });
+
+  // Reorder all links: first by source stage, then source y, then target y
+  const orderedLinks = [];
+  linksBySource.sort((a,b) => nodeMap.get(a[0]).stage - nodeMap.get(b[0]).stage);
+  linksBySource.forEach(([src, grp]) => grp.forEach(l => orderedLinks.push(l)));
+
+  // Now assign offsets
+  orderedLinks.forEach(l => {
+    const srcNode = nodeMap.get(l.source);
+    const tgtNode = nodeMap.get(l.target);
+    l.thickness = l.value * valueScale;
+    l.sy0 = srcNode.y0 + sourceOffsets.get(l.source);
+    l.sy1 = l.sy0 + l.thickness;
+    sourceOffsets.set(l.source, sourceOffsets.get(l.source) + l.thickness);
+  });
+
+  // For targets, sort incoming links by source y and assign
+  const linksByTarget = d3.groups(orderedLinks, d => d.target);
+  linksByTarget.forEach(([tgt, grp]) => {
+    grp.sort((a,b) => {
+      const an = nodeMap.get(a.source), bn = nodeMap.get(b.source);
+      return (an.y0 + an.y1)/2 - (bn.y0 + bn.y1)/2;
+    });
+    let off = 0;
+    grp.forEach(l => {
+      const tgtNode = nodeMap.get(l.target);
+      l.ty0 = tgtNode.y0 + off;
+      l.ty1 = l.ty0 + l.thickness;
+      off += l.thickness;
+    });
+  });
+
+  // ---------- PATH TRACING (for highlight) ----------
+  function getFullPathLinks(linkData, direction) {
+    // Trace forward and backward from a link
+    const result = new Set();
+    result.add(linkData);
+
+    // Trace backward
+    function traceBack(src) {
+      orderedLinks.forEach(l => {
+        if (l.target === src && !result.has(l)) {
+          result.add(l);
+          traceBack(l.source);
+        }
+      });
+    }
+    // Trace forward
+    function traceForward(tgt) {
+      orderedLinks.forEach(l => {
+        if (l.source === tgt && !result.has(l)) {
+          result.add(l);
+          traceForward(l.target);
+        }
+      });
+    }
+
+    traceBack(linkData.source);
+    traceForward(linkData.target);
+    return result;
+  }
+
+  function getNodeLinks(nodeId) {
+    const result = new Set();
+    function traceBack(src) {
+      orderedLinks.forEach(l => {
+        if (l.target === src && !result.has(l)) {
+          result.add(l);
+          traceBack(l.source);
+        }
+      });
+    }
+    function traceForward(tgt) {
+      orderedLinks.forEach(l => {
+        if (l.source === tgt && !result.has(l)) {
+          result.add(l);
+          traceForward(l.target);
+        }
+      });
+    }
+    traceBack(nodeId);
+    traceForward(nodeId);
+    return result;
+  }
+
+  // ---------- SVG ----------
+  const svg = d3.select("#chart")
+    .append("svg")
+    .attr("viewBox", `0 0 ${width} ${height}`)
+    .attr("preserveAspectRatio", "xMidYMid meet");
+
+  // Defs for animated dots
+  const defs = svg.append("defs");
+
+  // Link paths
+  const linkGroup = svg.append("g").attr("class", "links");
+  const linkPaths = linkGroup.selectAll("path")
+    .data(orderedLinks)
+    .join("path")
+    .attr("d", d => {
+      const x0 = nodeMap.get(d.source).x1;
+      const x1 = nodeMap.get(d.target).x0;
+      const midX = (x0 + x1) / 2;
+      const sy = (d.sy0 + d.sy1) / 2;
+      const ty = (d.ty0 + d.ty1) / 2;
+      return `M${x0},${sy} C${midX},${sy} ${midX},${ty} ${x1},${ty}`;
+    })
+    .attr("fill", "none")
+    .attr("stroke", d => linkColor(d))
+    .attr("stroke-width", d => Math.max(1, d.thickness))
+    .attr("stroke-linecap", "butt")
+    .style("cursor", "pointer");
+
+  // Animated dots along paths
+  const dotGroup = svg.append("g").attr("class", "dots");
+
+  function spawnDots() {
+    orderedLinks.forEach((l, i) => {
+      const pathEl = linkPaths.nodes()[i];
+      if (!pathEl) return;
+      const totalLen = pathEl.getTotalLength();
+      // Number of dots proportional to value
+      const numDots = Math.max(1, Math.round(l.value / 10));
+      for (let j = 0; j < numDots; j++) {
+        const delay = (j / numDots) * 4000 + Math.random() * 1000;
+        const dot = dotGroup.append("circle")
+          .attr("r", Math.max(1.5, l.thickness / 8))
+          .attr("fill", d3.color(nodeColor(nodeMap.get(l.source))).brighter(0.8).toString())
+          .attr("opacity", 0.8)
+          .datum(l);
+
+        function animateDot() {
+          const duration = 3000 + Math.random() * 2000;
+          dot.attr("opacity", 0)
+            .transition()
+            .delay(delay + j * 200)
+            .duration(0)
+            .attr("opacity", 0.7)
+            .transition()
+            .duration(duration)
+            .ease(d3.easeLinear)
+            .attrTween("transform", function() {
+              return function(t) {
+                const p = pathEl.getPointAtLength(t * totalLen);
+                return `translate(${p.x},${p.y})`;
+              };
+            })
+            .attr("opacity", 0)
+            .on("end", function() {
+              // Restart with varied timing
+              d3.select(this)
+                .transition()
+                .delay(Math.random() * 3000)
+                .duration(0)
+                .on("end", animateDot);
+            });
+        }
+        animateDot();
+      }
+    });
+  }
+  spawnDots();
+
+  // Node rects
+  const nodeGroup = svg.append("g").attr("class", "nodes");
+  const nodeRects = nodeGroup.selectAll("g")
+    .data(nodes)
+    .join("g")
+    .attr("transform", d => `translate(${d.x0},${d.y0})`);
+
+  nodeRects.append("rect")
+    .attr("width", nodeWidth)
+    .attr("height", d => Math.max(4, d.height))
+    .attr("rx", 3)
+    .attr("fill", d => nodeColor(d))
+    .attr("opacity", 0.9)
+    .style("cursor", "pointer");
+
+  // Node labels
+  nodeRects.append("text")
+    .attr("x", d => d.stage < numStages / 2 ? nodeWidth + 8 : -8)
+    .attr("y", d => Math.max(4, d.height) / 2)
+    .attr("dy", "0.35em")
+    .attr("text-anchor", d => d.stage < numStages / 2 ? "start" : "end")
+    .attr("fill", "#ccc")
+    .attr("font-size", "11px")
+    .attr("font-weight", 500)
+    .text(d => d.name);
+
+  // Stage labels at top
+  const stageNames = ["Sources", "Ingestion", "Validation", "Routing", "Enrichment", "Dedup", "Storage", "Consumers"];
+  svg.append("g").attr("class", "stage-labels")
+    .selectAll("text")
+    .data(stages)
+    .join("text")
+    .attr("x", ([stage, group]) => group[0].x0 + nodeWidth/2)
+    .attr("y", 14)
+    .attr("text-anchor", "middle")
+    .attr("fill", ([stage]) => stageColors[stage])
+    .attr("font-size", "10px")
+    .attr("font-weight", 600)
+    .attr("text-transform", "uppercase")
+    .attr("letter-spacing", "1px")
+    .attr("opacity", 0.7)
+    .text(([stage], i) => stageNames[i] || "");
+
+  // ---------- TOOLTIP ----------
+  const tooltip = d3.select("#tooltip");
+
+  function showTooltip(html, event) {
+    tooltip.html(html)
+      .style("opacity", 1)
+      .style("left", (event.clientX + 14) + "px")
+      .style("top", (event.clientY - 10) + "px");
+  }
+  function hideTooltip() {
+    tooltip.style("opacity", 0);
+  }
+
+  // ---------- INTERACTIONS ----------
+  // Hover link: highlight full path
+  linkPaths
+    .on("mouseenter", function(event, d) {
+      const pathLinks = getFullPathLinks(d);
+      linkPaths.attr("stroke", l => pathLinks.has(l) ? linkColorHighlight(l) : linkColor(l))
+               .attr("opacity", l => pathLinks.has(l) ? 1 : 0.15);
+      nodeRects.select("rect").attr("opacity", n => {
+        for (const pl of pathLinks) {
+          if (pl.source === n.id || pl.target === n.id) return 1;
+        }
+        return 0.15;
+      });
+      nodeRects.select("text").attr("opacity", n => {
+        for (const pl of pathLinks) {
+          if (pl.source === n.id || pl.target === n.id) return 1;
+        }
+        return 0.25;
+      });
+      dotGroup.selectAll("circle").attr("opacity", function(cd) {
+        return pathLinks.has(cd) ? 0.85 : 0.05;
+      });
+      const srcName = nodeMap.get(d.source).name;
+      const tgtName = nodeMap.get(d.target).name;
+      showTooltip(
+        `<div class="label">${srcName} &rarr; ${tgtName}</div>` +
+        `<div class="value">${d.value}% of total throughput</div>`,
+        event
+      );
+    })
+    .on("mousemove", function(event) {
+      tooltip.style("left", (event.clientX + 14) + "px")
+             .style("top", (event.clientY - 10) + "px");
+    })
+    .on("mouseleave", function() {
+      linkPaths.attr("stroke", d => linkColor(d)).attr("opacity", 1);
+      nodeRects.select("rect").attr("opacity", 0.9);
+      nodeRects.select("text").attr("opacity", 1);
+      dotGroup.selectAll("circle").attr("opacity", 0.7);
+      hideTooltip();
+    });
+
+  // Hover node: show throughput + highlight connected
+  nodeRects
+    .on("mouseenter", function(event, d) {
+      const connectedLinks = getNodeLinks(d.id);
+      linkPaths.attr("stroke", l => connectedLinks.has(l) ? linkColorHighlight(l) : linkColor(l))
+               .attr("opacity", l => connectedLinks.has(l) ? 1 : 0.15);
+
+      const connectedNodes = new Set([d.id]);
+      connectedLinks.forEach(l => { connectedNodes.add(l.source); connectedNodes.add(l.target); });
+
+      nodeRects.select("rect").attr("opacity", n => connectedNodes.has(n.id) ? 1 : 0.15);
+      nodeRects.select("text").attr("opacity", n => connectedNodes.has(n.id) ? 1 : 0.25);
+      dotGroup.selectAll("circle").attr("opacity", function(cd) {
+        return connectedLinks.has(cd) ? 0.85 : 0.05;
+      });
+
+      const incoming = orderedLinks.filter(l => l.target === d.id).reduce((s,l) => s + l.value, 0);
+      const outgoing = orderedLinks.filter(l => l.source === d.id).reduce((s,l) => s + l.value, 0);
+      let details = `<div class="label">${d.name}</div>`;
+      if (incoming > 0) details += `<div class="value">Incoming: ${incoming}%</div>`;
+      if (outgoing > 0) details += `<div class="value">Outgoing: ${outgoing}%</div>`;
+      details += `<div class="value">Throughput: ${d.totalValue}%</div>`;
+      showTooltip(details, event);
+    })
+    .on("mousemove", function(event) {
+      tooltip.style("left", (event.clientX + 14) + "px")
+             .style("top", (event.clientY - 10) + "px");
+    })
+    .on("mouseleave", function() {
+      linkPaths.attr("stroke", d => linkColor(d)).attr("opacity", 1);
+      nodeRects.select("rect").attr("opacity", 0.9);
+      nodeRects.select("text").attr("opacity", 1);
+      dotGroup.selectAll("circle").attr("opacity", 0.7);
+      hideTooltip();
+    });
+
+})();
+</script>
+</body>
+</html>

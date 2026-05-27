@@ -1,0 +1,579 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Git Flow State Diagram</title>
+<style>
+  *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #0a0a0a;
+    color: #e0e0e0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    overflow-x: hidden;
+  }
+
+  header {
+    text-align: center;
+    padding: 2rem 1rem 0.5rem;
+  }
+
+  header h1 {
+    font-size: clamp(1.8rem, 4vw, 2.6rem);
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    background: linear-gradient(135deg, #d4a017, #2ec4b6, #9b5de5, #f4845f, #e63946);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  header p {
+    margin-top: 0.4rem;
+    font-size: clamp(0.85rem, 1.6vw, 1rem);
+    color: #888;
+    font-style: italic;
+  }
+
+  .controls {
+    display: flex;
+    align-items: center;
+    gap: 1.2rem;
+    padding: 0.8rem 1.5rem;
+    margin: 0.8rem 0;
+    background: #151515;
+    border: 1px solid #2a2a2a;
+    border-radius: 10px;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  .controls button {
+    background: #222;
+    color: #e0e0e0;
+    border: 1px solid #444;
+    border-radius: 6px;
+    padding: 0.45rem 1.1rem;
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: background 0.2s, border-color 0.2s;
+    font-family: inherit;
+  }
+
+  .controls button:hover { background: #333; border-color: #666; }
+  .controls button.active { background: #2ec4b6; color: #0a0a0a; border-color: #2ec4b6; }
+
+  .controls label {
+    font-size: 0.85rem;
+    color: #999;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .controls input[type="range"] {
+    width: 100px;
+    accent-color: #2ec4b6;
+  }
+
+  .speed-val {
+    min-width: 2.2em;
+    text-align: center;
+    color: #ccc;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .hint {
+    font-size: 0.75rem;
+    color: #666;
+    text-align: center;
+    margin-bottom: 0.3rem;
+  }
+
+  .svg-wrap {
+    width: 100%;
+    max-width: 960px;
+    flex: 1;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding: 0 1rem 2rem;
+  }
+
+  svg { width: 100%; height: auto; display: block; }
+
+  /* State node base */
+  .state-node { cursor: pointer; }
+  .state-node rect {
+    rx: 14;
+    ry: 14;
+    stroke-width: 2.5;
+    transition: filter 0.3s, opacity 0.3s;
+  }
+  .state-node text {
+    font-family: inherit;
+    font-weight: 600;
+    font-size: 15px;
+    fill: #fff;
+    pointer-events: none;
+    text-anchor: middle;
+    dominant-baseline: central;
+  }
+  .state-node .sub-label {
+    font-size: 10px;
+    font-weight: 400;
+    fill: rgba(255,255,255,0.65);
+  }
+
+  .state-node:hover rect { filter: brightness(1.25) drop-shadow(0 0 8px currentColor); }
+
+  /* Arrow paths */
+  .arrow-path {
+    fill: none;
+    stroke-width: 2;
+    stroke-linecap: round;
+    cursor: pointer;
+    transition: opacity 0.35s, stroke-width 0.2s;
+  }
+  .arrow-path:hover { stroke-width: 3.5; }
+
+  .arrow-head {
+    transition: opacity 0.35s;
+  }
+
+  /* Labels */
+  .edge-label {
+    font-family: inherit;
+    font-size: 11px;
+    fill: #888;
+    pointer-events: none;
+    transition: fill 0.3s, font-size 0.3s;
+  }
+  .edge-label.prominent {
+    fill: #fff;
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  /* Animated dot */
+  .flow-dot {
+    transition: opacity 0.3s;
+  }
+
+  /* Dimmed state */
+  .dimmed { opacity: 0.15 !important; }
+  .highlighted rect { filter: brightness(1.2) drop-shadow(0 0 12px currentColor); }
+
+  /* Tooltip */
+  .tooltip-box {
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.25s;
+  }
+  .tooltip-box.visible { opacity: 1; }
+  .tooltip-box rect {
+    fill: #222;
+    stroke: #555;
+    stroke-width: 1;
+    rx: 6; ry: 6;
+  }
+  .tooltip-box text {
+    fill: #fff;
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    text-anchor: middle;
+    dominant-baseline: central;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Git Flow</h1>
+  <p>Watch commits flow between branches in the classic Git Flow model</p>
+</header>
+
+<div class="controls">
+  <button id="playPauseBtn" class="active">Pause</button>
+  <label>
+    Speed
+    <input type="range" id="speedSlider" min="0.2" max="3" step="0.1" value="1">
+    <span class="speed-val" id="speedVal">1.0x</span>
+  </label>
+  <button id="resetBtn">Reset View</button>
+</div>
+<div class="hint">Click a branch to highlight its transitions. Click background to reset.</div>
+
+<div class="svg-wrap">
+<svg id="diagram" viewBox="0 0 900 520" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- glow filters per colour -->
+    <filter id="glow-gold"><feGaussianBlur stdDeviation="3" result="g"/><feMerge><feMergeNode in="g"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    <filter id="glow-teal"><feGaussianBlur stdDeviation="3" result="g"/><feMerge><feMergeNode in="g"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    <filter id="glow-purple"><feGaussianBlur stdDeviation="3" result="g"/><feMerge><feMergeNode in="g"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    <filter id="glow-coral"><feGaussianBlur stdDeviation="3" result="g"/><feMerge><feMergeNode in="g"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    <filter id="glow-red"><feGaussianBlur stdDeviation="3" result="g"/><feMerge><feMergeNode in="g"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+
+    <!-- Arrowhead markers -->
+    <marker id="ah-gold" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+      <path d="M0,0 L10,4 L0,8 Z" fill="#d4a017"/>
+    </marker>
+    <marker id="ah-teal" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+      <path d="M0,0 L10,4 L0,8 Z" fill="#2ec4b6"/>
+    </marker>
+    <marker id="ah-purple" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+      <path d="M0,0 L10,4 L0,8 Z" fill="#9b5de5"/>
+    </marker>
+    <marker id="ah-coral" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+      <path d="M0,0 L10,4 L0,8 Z" fill="#f4845f"/>
+    </marker>
+    <marker id="ah-red" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+      <path d="M0,0 L10,4 L0,8 Z" fill="#e63946"/>
+    </marker>
+  </defs>
+
+  <!-- background click target -->
+  <rect id="bgRect" x="0" y="0" width="900" height="520" fill="transparent"/>
+
+  <!-- ============ EDGES (drawn first, behind nodes) ============ -->
+  <g id="edgesGroup"></g>
+
+  <!-- ============ NODES ============ -->
+  <g id="nodesGroup"></g>
+
+  <!-- ============ DOTS ============ -->
+  <g id="dotsGroup"></g>
+
+  <!-- Tooltip -->
+  <g class="tooltip-box" id="tooltip">
+    <rect x="0" y="0" width="180" height="30"/>
+    <text x="90" y="15"></text>
+  </g>
+</svg>
+</div>
+
+<script>
+(function(){
+  // ───────── DATA ─────────
+  const BRANCHES = [
+    { id: "main",     label: "main",       sub: "production",     cx: 450, cy: 62,  w: 150, h: 52, color: "#d4a017", glow: "glow-gold",   marker: "ah-gold" },
+    { id: "develop",  label: "develop",    sub: "integration",    cx: 450, cy: 230, w: 150, h: 52, color: "#2ec4b6", glow: "glow-teal",   marker: "ah-teal" },
+    { id: "feature",  label: "feature/*",  sub: "new work",       cx: 180, cy: 400, w: 160, h: 52, color: "#9b5de5", glow: "glow-purple", marker: "ah-purple" },
+    { id: "release",  label: "release/*",  sub: "stabilization",  cx: 620, cy: 400, w: 160, h: 52, color: "#f4845f", glow: "glow-coral",  marker: "ah-coral" },
+    { id: "hotfix",   label: "hotfix/*",   sub: "emergency fix",  cx: 790, cy: 170, w: 155, h: 52, color: "#e63946", glow: "glow-red",    marker: "ah-red" },
+  ];
+
+  const branchMap = {};
+  BRANCHES.forEach(b => branchMap[b.id] = b);
+
+  // 8 transitions
+  const EDGES = [
+    { id: "e1", from: "develop",  to: "feature",  label: "branch off",              color: "#9b5de5", marker: "ah-purple" },
+    { id: "e2", from: "feature",  to: "develop",  label: "merge feature",           color: "#2ec4b6", marker: "ah-teal" },
+    { id: "e3", from: "develop",  to: "release",  label: "create release",          color: "#f4845f", marker: "ah-coral" },
+    { id: "e4", from: "release",  to: "main",     label: "merge to main",           color: "#d4a017", marker: "ah-gold" },
+    { id: "e5", from: "release",  to: "develop",  label: "back-merge fixes",        color: "#2ec4b6", marker: "ah-teal" },
+    { id: "e6", from: "main",     to: "hotfix",   label: "branch hotfix",           color: "#e63946", marker: "ah-red" },
+    { id: "e7", from: "hotfix",   to: "main",     label: "merge hotfix to main",    color: "#d4a017", marker: "ah-gold" },
+    { id: "e8", from: "hotfix",   to: "develop",  label: "merge hotfix to develop", color: "#2ec4b6", marker: "ah-teal" },
+  ];
+
+  // ───────── HELPERS ─────────
+  function edgePath(e) {
+    const a = branchMap[e.from], b = branchMap[e.to];
+    const ax = a.cx, ay = a.cy, bx = b.cx, by = b.cy;
+    const dx = bx - ax, dy = by - ay;
+    const dist = Math.sqrt(dx*dx + dy*dy);
+
+    // unit vector from a to b
+    const ux = dx / dist, uy = dy / dist;
+
+    // start/end offset from centre (half-size + margin)
+    const sOff = offsetForDir(a, ux, uy) + 4;
+    const eOff = offsetForDir(b, -ux, -uy) + 14; // extra for arrowhead
+
+    const sx = ax + ux * sOff, sy = ay + uy * sOff;
+    const ex = bx - ux * eOff, ey = by - uy * eOff;
+
+    // perpendicular for curve
+    const px = -uy, py = ux;
+    const curvature = curvatureFor(e);
+    const mx = (sx + ex) / 2 + px * curvature;
+    const my = (sy + ey) / 2 + py * curvature;
+
+    return `M${sx},${sy} Q${mx},${my} ${ex},${ey}`;
+  }
+
+  function offsetForDir(node, ux, uy) {
+    // approximate edge of rounded rect along direction
+    const hw = node.w / 2, hh = node.h / 2;
+    const absX = Math.abs(ux), absY = Math.abs(uy);
+    if (absX < 0.001) return hh;
+    if (absY < 0.001) return hw;
+    const tx = hw / absX, ty = hh / absY;
+    return Math.min(tx, ty);
+  }
+
+  function curvatureFor(e) {
+    // Tuned per-edge for aesthetics
+    const map = { e1: 50, e2: -50, e3: 50, e4: -60, e5: -50, e6: 30, e7: -30, e8: 60 };
+    return map[e.id] || 40;
+  }
+
+  function labelPos(e) {
+    const a = branchMap[e.from], b = branchMap[e.to];
+    const ax = a.cx, ay = a.cy, bx = b.cx, by = b.cy;
+    const dx = bx - ax, dy = by - ay;
+    const dist = Math.sqrt(dx*dx + dy*dy);
+    const ux = dx / dist, uy = dy / dist;
+    const px = -uy, py = ux;
+    const curvature = curvatureFor(e);
+    const mx = (ax + bx) / 2 + px * curvature * 0.55;
+    const my = (ay + by) / 2 + py * curvature * 0.55;
+    return { x: mx, y: my };
+  }
+
+  // ───────── BUILD SVG ─────────
+  const svg = document.getElementById("diagram");
+  const edgesG = document.getElementById("edgesGroup");
+  const nodesG = document.getElementById("nodesGroup");
+  const dotsG = document.getElementById("dotsGroup");
+  const tooltip = document.getElementById("tooltip");
+  const tooltipRect = tooltip.querySelector("rect");
+  const tooltipText = tooltip.querySelector("text");
+
+  // Draw edges
+  EDGES.forEach(e => {
+    const d = edgePath(e);
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", d);
+    path.setAttribute("class", "arrow-path");
+    path.setAttribute("stroke", e.color);
+    path.setAttribute("marker-end", `url(#${e.marker})`);
+    path.setAttribute("data-edge", e.id);
+    path.setAttribute("data-from", e.from);
+    path.setAttribute("data-to", e.to);
+    path.style.opacity = 0.6;
+    edgesG.appendChild(path);
+
+    // Label
+    const lp = labelPos(e);
+    const txt = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    txt.setAttribute("x", lp.x);
+    txt.setAttribute("y", lp.y);
+    txt.setAttribute("class", "edge-label");
+    txt.setAttribute("text-anchor", "middle");
+    txt.setAttribute("data-edge", e.id);
+    txt.textContent = e.label;
+    edgesG.appendChild(txt);
+
+    // Hover
+    path.addEventListener("mouseenter", () => {
+      txt.classList.add("prominent");
+      showTooltip(e.label, lp.x, lp.y - 22);
+    });
+    path.addEventListener("mouseleave", () => {
+      txt.classList.remove("prominent");
+      hideTooltip();
+    });
+  });
+
+  // Draw nodes
+  BRANCHES.forEach(b => {
+    const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    g.setAttribute("class", "state-node");
+    g.setAttribute("data-branch", b.id);
+
+    const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    rect.setAttribute("x", b.cx - b.w/2);
+    rect.setAttribute("y", b.cy - b.h/2);
+    rect.setAttribute("width", b.w);
+    rect.setAttribute("height", b.h);
+    rect.setAttribute("fill", b.color + "22");
+    rect.setAttribute("stroke", b.color);
+    rect.style.color = b.color; // for currentColor in hover
+    rect.setAttribute("filter", `url(#${b.glow})`);
+    g.appendChild(rect);
+
+    const label = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    label.setAttribute("x", b.cx);
+    label.setAttribute("y", b.cy - 6);
+    label.textContent = b.label;
+    g.appendChild(label);
+
+    const sub = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    sub.setAttribute("x", b.cx);
+    sub.setAttribute("y", b.cy + 12);
+    sub.setAttribute("class", "sub-label");
+    sub.textContent = b.sub;
+    g.appendChild(sub);
+
+    nodesG.appendChild(g);
+
+    g.addEventListener("click", ev => {
+      ev.stopPropagation();
+      highlightBranch(b.id);
+    });
+  });
+
+  // ───────── ANIMATED DOTS ─────────
+  const dotElements = [];
+
+  EDGES.forEach(e => {
+    const path = edgesG.querySelector(`path[data-edge="${e.id}"]`);
+    const totalLen = path.getTotalLength();
+
+    const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    circle.setAttribute("r", 4.5);
+    circle.setAttribute("fill", e.color);
+    circle.setAttribute("class", "flow-dot");
+    circle.setAttribute("data-from", e.from);
+    circle.setAttribute("data-to", e.to);
+    circle.setAttribute("filter", `url(#${BRANCHES.find(b => b.color === e.color)?.glow || "glow-teal"})`);
+    dotsG.appendChild(circle);
+
+    dotElements.push({
+      el: circle,
+      path: path,
+      totalLen: totalLen,
+      offset: Math.random(),  // stagger start
+      edge: e,
+    });
+  });
+
+  // ───────── ANIMATION LOOP ─────────
+  let playing = true;
+  let speed = 1;
+  let lastTime = null;
+
+  function animate(ts) {
+    if (!lastTime) lastTime = ts;
+    const dt = (ts - lastTime) / 1000;
+    lastTime = ts;
+
+    if (playing) {
+      dotElements.forEach(d => {
+        d.offset += dt * speed * 0.25;  // full loop ≈4s at 1x
+        if (d.offset > 1) d.offset -= 1;
+        const pt = d.path.getPointAtLength(d.offset * d.totalLen);
+        d.el.setAttribute("cx", pt.x);
+        d.el.setAttribute("cy", pt.y);
+      });
+    }
+
+    requestAnimationFrame(animate);
+  }
+  requestAnimationFrame(animate);
+
+  // ───────── CONTROLS ─────────
+  const playBtn = document.getElementById("playPauseBtn");
+  const slider = document.getElementById("speedSlider");
+  const speedVal = document.getElementById("speedVal");
+  const resetBtn = document.getElementById("resetBtn");
+
+  playBtn.addEventListener("click", () => {
+    playing = !playing;
+    playBtn.textContent = playing ? "Pause" : "Play";
+    playBtn.classList.toggle("active", playing);
+  });
+
+  slider.addEventListener("input", () => {
+    speed = parseFloat(slider.value);
+    speedVal.textContent = speed.toFixed(1) + "x";
+  });
+
+  resetBtn.addEventListener("click", clearHighlight);
+  document.getElementById("bgRect").addEventListener("click", clearHighlight);
+
+  // ───────── HIGHLIGHT LOGIC ─────────
+  let activeBranch = null;
+
+  function highlightBranch(id) {
+    if (activeBranch === id) { clearHighlight(); return; }
+    activeBranch = id;
+
+    // Nodes
+    nodesG.querySelectorAll(".state-node").forEach(g => {
+      const bid = g.getAttribute("data-branch");
+      g.classList.toggle("dimmed", bid !== id);
+      g.classList.toggle("highlighted", bid === id);
+    });
+
+    // Edges & labels
+    edgesG.querySelectorAll(".arrow-path").forEach(p => {
+      const from = p.getAttribute("data-from");
+      const to = p.getAttribute("data-to");
+      const connected = from === id || to === id;
+      p.classList.toggle("dimmed", !connected);
+      if (connected) {
+        p.style.opacity = 1;
+        // also un-dim connected nodes
+        const other = from === id ? to : from;
+        const otherNode = nodesG.querySelector(`[data-branch="${other}"]`);
+        if (otherNode) { otherNode.classList.remove("dimmed"); }
+      } else {
+        p.style.opacity = "";
+      }
+    });
+
+    edgesG.querySelectorAll(".edge-label").forEach(t => {
+      const eid = t.getAttribute("data-edge");
+      const edge = EDGES.find(e => e.id === eid);
+      if (edge) {
+        const connected = edge.from === id || edge.to === id;
+        t.classList.toggle("dimmed", !connected);
+      }
+    });
+
+    // Dots
+    dotsG.querySelectorAll(".flow-dot").forEach(c => {
+      const from = c.getAttribute("data-from");
+      const to = c.getAttribute("data-to");
+      c.classList.toggle("dimmed", from !== id && to !== id);
+    });
+  }
+
+  function clearHighlight() {
+    activeBranch = null;
+    nodesG.querySelectorAll(".state-node").forEach(g => {
+      g.classList.remove("dimmed", "highlighted");
+    });
+    edgesG.querySelectorAll(".arrow-path").forEach(p => {
+      p.classList.remove("dimmed");
+      p.style.opacity = 0.6;
+    });
+    edgesG.querySelectorAll(".edge-label").forEach(t => {
+      t.classList.remove("dimmed", "prominent");
+    });
+    dotsG.querySelectorAll(".flow-dot").forEach(c => {
+      c.classList.remove("dimmed");
+    });
+  }
+
+  // ───────── TOOLTIP ─────────
+  function showTooltip(text, x, y) {
+    tooltipText.textContent = text;
+    const bbox = tooltipText.getBBox();
+    const pw = bbox.width + 24;
+    const ph = 30;
+    tooltipRect.setAttribute("width", pw);
+    tooltipRect.setAttribute("height", ph);
+    tooltipText.setAttribute("x", pw / 2);
+    tooltipText.setAttribute("y", ph / 2);
+    tooltip.setAttribute("transform", `translate(${x - pw/2}, ${y - ph/2})`);
+    tooltip.classList.add("visible");
+  }
+
+  function hideTooltip() {
+    tooltip.classList.remove("visible");
+  }
+})();
+</script>
+</body>
+</html>
