@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Token Bucket Rate Limiter</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    background: #0a0a0a; color: #e0e0e0; overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    display: flex; flex-direction: column;
+  }
+  header { padding: 1rem 1.4rem 0.6rem; }
+  h1 { font-size: 1.5rem; font-weight: 700; color: #fff; letter-spacing: -0.5px; }
+  .sub { font-size: 0.9rem; color: #888; margin-top: 0.15rem; max-width: 900px; }
+  .controls {
+    display: flex; flex-wrap: wrap; gap: 1.4rem; align-items: center;
+    padding: 0.7rem 1.4rem; border-bottom: 1px solid rgba(255,255,255,0.08);
+  }
+  .ctrl { display: flex; flex-direction: column; gap: 0.25rem; min-width: 150px; }
+  .ctrl label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.6px; color: #888; }
+  .ctrl .val { color: #4ecdc4; font-weight: 600; }
+  input[type=range] { accent-color: #4ecdc4; width: 160px; }
+  button {
+    background: #161616; color: #ccc; border: 1px solid #2a2a2a; border-radius: 6px;
+    padding: 0.45rem 0.9rem; font-size: 0.82rem; cursor: pointer; transition: border-color .2s, color .2s;
+  }
+  button:hover { border-color: #4ecdc4; color: #fff; }
+  #stage { flex: 1; position: relative; }
+  canvas { display: block; width: 100%; height: 100%; }
+  #export { position: absolute; top: 0.9rem; right: 1.1rem; z-index: 5; }
+  .legend { position: absolute; left: 1.1rem; bottom: 1rem; font-size: 0.8rem; color: #aaa; display: flex; gap: 1.2rem; }
+  .legend span::before { content: ''; display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+  .lg-token::before { background: #4ecdc4; }
+  .lg-pass::before { background: #a8e6cf; }
+  .lg-drop::before { background: #ff6b6b; }
+  .stats { position: absolute; right: 1.1rem; bottom: 1rem; font-size: 0.82rem; color: #aaa; text-align: right; line-height: 1.5; }
+  .stats b { color: #fff; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Token Bucket Rate Limiter</h1>
+  <div class="sub">Requests flow in from the left. At the gate, each one tries to spend a token from the bucket: if a token is available it passes (green); if the bucket is empty it's dropped (red). Tokens refill at a steady drip. Tune the knobs and watch bursts get absorbed — or rejected.</div>
+</header>
+<div class="controls">
+  <div class="ctrl"><label>Refill rate <span class="val" id="vRefill"></span></label><input id="refill" type="range" min="1" max="20" value="5"></div>
+  <div class="ctrl"><label>Bucket capacity <span class="val" id="vCap"></span></label><input id="cap" type="range" min="1" max="40" value="12"></div>
+  <div class="ctrl"><label>Request rate <span class="val" id="vReq"></span></label><input id="req" type="range" min="1" max="40" value="8"></div>
+  <button id="burst">Send burst (+15)</button>
+  <button id="pause">Pause</button>
+</div>
+<div id="stage">
+  <button id="export">⇩ Export PNG</button>
+  <canvas id="c"></canvas>
+  <div class="legend">
+    <span class="lg-token">tokens in bucket</span>
+    <span class="lg-pass">allowed</span>
+    <span class="lg-drop">dropped</span>
+  </div>
+  <div class="stats" id="stats"></div>
+</div>
+<script>
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+let W, H, dpr;
+function resize() {
+  dpr = window.devicePixelRatio || 1;
+  const r = cv.getBoundingClientRect();
+  W = r.width; H = r.height;
+  cv.width = W * dpr; cv.height = H * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+window.addEventListener('resize', resize);
+
+const S = { refill: 5, cap: 12, req: 8, tokens: 12, paused: false };
+let allowed = 0, dropped = 0, burstQ = 0;
+const reqs = [];   // incoming requests {x,y,state:'in'|'pass'|'drop',vx,vy,life}
+const drips = [];  // refill drops {y, life}
+
+function bind(id, key, fmt, el) {
+  const inp = document.getElementById(id), out = document.getElementById(el);
+  const upd = () => { S[key] = +inp.value; out.textContent = fmt(S[key]); };
+  inp.addEventListener('input', upd); upd();
+}
+bind('refill','refill', v=>v+'/s','vRefill');
+bind('cap','cap', v=>v,'vCap');
+bind('req','req', v=>v+'/s','vReq');
+document.getElementById('burst').onclick = () => { burstQ += 15; };
+document.getElementById('pause').onclick = (e) => { S.paused = !S.paused; e.target.textContent = S.paused ? 'Resume' : 'Pause'; };
+
+// layout helpers (recomputed each frame so it always fills the frame)
+function geo() {
+  const bw = Math.max(120, W*0.13);
+  const bx = W*0.52;
+  const btop = H*0.20, bh = H*0.60;
+  const gateX = bx;            // requests arrive at the bucket's left wall
+  const laneY = btop + bh*0.42;
+  return { bw, bx, btop, bh, gateX, laneY };
+}
+
+let last = performance.now(), refillAcc = 0, reqAcc = 0;
+function tick(now) {
+  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  const g = geo();
+  if (!S.paused) {
+    // refill drip
+    refillAcc += dt * S.refill;
+    while (refillAcc >= 1) { if (S.tokens < S.cap) { S.tokens++; drips.push({ y: g.btop - 40, life: 1 }); } refillAcc -= 1; }
+    // spawn requests from the left
+    reqAcc += dt * S.req; let fire = 0; while (reqAcc >= 1) { fire++; reqAcc -= 1; }
+    fire += burstQ; burstQ = 0;
+    for (let i = 0; i < fire; i++) reqs.push({ x: -10, y: g.laneY + (Math.random()*40-20), state:'in', vx: W*0.42, vy:0, life:1 });
+  }
+  draw(dt, g);
+  requestAnimationFrame(tick);
+}
+
+function draw(dt, g) {
+  ctx.clearRect(0,0,W,H);
+  const { bw, bx, btop, bh, gateX, laneY } = g;
+
+  // --- incoming lane guide ---
+  ctx.strokeStyle = 'rgba(255,255,255,0.06)'; ctx.lineWidth = 28;
+  ctx.beginPath(); ctx.moveTo(0, laneY); ctx.lineTo(gateX, laneY); ctx.stroke();
+  ctx.fillStyle='#666'; ctx.font='13px -apple-system, sans-serif'; ctx.textAlign='left';
+  ctx.fillText('incoming requests  →', 8, laneY - 26);
+
+  // --- faucet + drip (refill) ---
+  ctx.fillStyle = '#2a2a2a'; ctx.fillRect(bx+bw/2-18, btop-58, 36, 12);
+  ctx.fillStyle='#666'; ctx.textAlign='center'; ctx.fillText('refill '+S.refill+'/s', bx+bw/2, btop-66);
+  for (let i = drips.length-1; i>=0; i--) {
+    const d = drips[i]; if (!S.paused) d.y += 260*dt;
+    if (d.y >= btop + bh - bh*(S.tokens/S.cap)) { drips.splice(i,1); continue; }
+    ctx.fillStyle = '#4ecdc4'; ctx.beginPath(); ctx.arc(bx+bw/2, d.y, 4, 0, 7); ctx.fill();
+  }
+
+  // --- bucket ---
+  ctx.strokeStyle = 'rgba(255,255,255,0.18)'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(bx, btop); ctx.lineTo(bx, btop+bh); ctx.lineTo(bx+bw, btop+bh); ctx.lineTo(bx+bw, btop); ctx.stroke();
+  const fh = bh * (S.tokens / S.cap);
+  const grad = ctx.createLinearGradient(0, btop+bh-fh, 0, btop+bh);
+  grad.addColorStop(0, '#4ecdc4'); grad.addColorStop(1, '#2dd4bf');
+  ctx.fillStyle = grad; ctx.fillRect(bx+2, btop+bh-fh, bw-4, fh);
+  ctx.fillStyle = '#888'; ctx.font='12px -apple-system, sans-serif'; ctx.textAlign='right';
+  ctx.fillText('cap '+S.cap, bx-8, btop+12); ctx.fillText('0', bx-8, btop+bh);
+  ctx.textAlign='center'; ctx.fillStyle='#fff'; ctx.font='600 24px -apple-system, sans-serif';
+  ctx.fillText(S.tokens.toFixed(0), bx+bw/2, btop+bh+34);
+  ctx.fillStyle='#888'; ctx.font='12px -apple-system, sans-serif';
+  ctx.fillText('tokens available', bx+bw/2, btop+bh+52);
+
+  // --- gate ---
+  ctx.strokeStyle = '#ffd93d'; ctx.lineWidth = 2; ctx.setLineDash([5,5]);
+  ctx.beginPath(); ctx.moveTo(gateX, btop-10); ctx.lineTo(gateX, btop+bh+10); ctx.stroke(); ctx.setLineDash([]);
+  ctx.fillStyle='#ffd93d'; ctx.font='12px -apple-system, sans-serif'; ctx.textAlign='center';
+  ctx.fillText('gate', gateX, btop-18);
+
+  // --- served / dropped exit labels (fills right side) ---
+  ctx.fillStyle='#666'; ctx.textAlign='left'; ctx.font='13px -apple-system, sans-serif';
+  ctx.fillText('→  served', bx+bw+18, laneY+4);
+  ctx.fillStyle='#5a3030'; ctx.fillText('↓  dropped', gateX-70, btop+bh+12);
+
+  // --- request markers ---
+  for (let i = reqs.length-1; i>=0; i--) {
+    const r = reqs[i];
+    if (!S.paused) {
+      if (r.state === 'in') {
+        r.x += r.vx*dt;
+        if (r.x >= gateX) {
+          if (S.tokens >= 1) { S.tokens--; allowed++; r.state='pass'; }
+          else { dropped++; r.state='drop'; r.vy = 60; }
+        }
+      } else if (r.state === 'pass') { r.x += W*0.42*dt; }   // continue through to the right
+      else { r.vy += 600*dt; r.y += r.vy*dt; r.x += 12*dt; r.life -= dt*0.8; }
+    }
+    const dead = (r.state==='pass' && r.x > W+10) || (r.state==='drop' && (r.life<=0 || r.y>H));
+    if (dead) { reqs.splice(i,1); continue; }
+    ctx.globalAlpha = r.state==='drop' ? Math.max(0,r.life) : 1;
+    ctx.fillStyle = r.state==='in' ? '#cfd8dc' : r.state==='pass' ? '#a8e6cf' : '#ff6b6b';
+    ctx.beginPath(); ctx.arc(r.x, r.y, 5, 0, 7); ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+
+  document.getElementById('stats').innerHTML =
+    `allowed <b>${allowed}</b> &nbsp; dropped <b style="color:#ff6b6b">${dropped}</b><br>`+
+    `pass rate <b>${allowed+dropped? Math.round(allowed/(allowed+dropped)*100):100}%</b>`;
+}
+
+// PNG export — Hard Rule 9 (canvas path, 2x, opaque background)
+document.getElementById('export').onclick = () => {
+  const s = 2, off = document.createElement('canvas');
+  off.width = W*s; off.height = H*s;
+  const o = off.getContext('2d');
+  o.fillStyle = '#0a0a0a'; o.fillRect(0,0,off.width,off.height);
+  o.drawImage(cv, 0, 0, off.width, off.height);
+  off.toBlob(b => {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(b); a.download = 'visualise-rate-limiter.png'; a.click();
+    URL.revokeObjectURL(a.href);
+  });
+};
+
+resize(); requestAnimationFrame(tick);
+</script>
+</body>
+</html>

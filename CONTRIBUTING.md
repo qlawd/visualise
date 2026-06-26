@@ -1,6 +1,6 @@
 # Contributing to visualise
 
-This project is unusual: the core product is a single prompt file (`SKILL.md`) and the gallery is proof it works. Contributions are welcome — here's how.
+This project is unusual: the core product is a single prompt file (`SKILL.md`) and the gallery is proof it works. Contributions are welcome. Here is how.
 
 ## Three ways to contribute
 
@@ -20,7 +20,7 @@ Generate a visualization using the skill, polish it, and submit the HTML file.
 
 ### 2. Prompt improvements
 
-Changes to `SKILL.md` require more care — the prompt is a balanced system.
+Changes to `SKILL.md` require more care, because the prompt is a balanced system.
 
 **Process:**
 1. Open an issue first describing the failure mode

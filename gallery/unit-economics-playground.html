@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SaaS Unit Economics — Playground</title>
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    background: #0a0a0a; color: #e0e0e0; overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    display: flex; flex-direction: column;
+  }
+  header { padding: 0.9rem 1.4rem 0.55rem; display:flex; justify-content:space-between; align-items:flex-start; gap:1rem; }
+  h1 { font-size: 1.45rem; font-weight: 700; color: #fff; letter-spacing: -0.5px; }
+  .sub { font-size: 0.88rem; color: #888; margin-top: 0.15rem; max-width: 760px; }
+  .topbtns { display:flex; gap:0.5rem; flex-shrink:0; }
+  button {
+    background: #161616; color: #ccc; border: 1px solid #2a2a2a; border-radius: 6px;
+    padding: 0.45rem 0.85rem; font-size: 0.8rem; cursor: pointer; transition: border-color .2s, color .2s; white-space:nowrap;
+  }
+  button:hover { border-color: #4ecdc4; color: #fff; }
+  button.primary { border-color:#4ecdc4; color:#4ecdc4; }
+  .main { flex:1; display:grid; grid-template-columns: 300px 1fr; gap:0; min-height:0; border-top:1px solid rgba(255,255,255,0.08); }
+  /* ---- controls ---- */
+  .panel { padding: 1rem 1.2rem; overflow-y:auto; border-right:1px solid rgba(255,255,255,0.08); }
+  .presets { display:flex; flex-wrap:wrap; gap:0.4rem; margin-bottom:1rem; }
+  .presets button { flex:1; padding:0.4rem 0.3rem; font-size:0.74rem; }
+  .grp-title { font-size:0.7rem; text-transform:uppercase; letter-spacing:0.7px; color:#666; margin:0.9rem 0 0.5rem; }
+  .ctrl { margin-bottom: 0.85rem; }
+  .ctrl label { display:flex; justify-content:space-between; font-size:0.8rem; color:#aaa; margin-bottom:0.3rem; }
+  .ctrl label .v { color:#4ecdc4; font-weight:600; }
+  input[type=range] { width:100%; accent-color:#4ecdc4; }
+  /* ---- results ---- */
+  .results { padding: 1rem 1.3rem; display:flex; flex-direction:column; min-height:0; overflow:hidden; }
+  .heroes { display:grid; grid-template-columns: repeat(4,1fr); gap:0.8rem; margin-bottom:0.9rem; }
+  .hero { background:#111; border:1px solid #222; border-radius:8px; padding:0.7rem 0.9rem; }
+  .hero .k { font-size:0.7rem; text-transform:uppercase; letter-spacing:0.6px; color:#777; }
+  .hero .val { font-size:1.7rem; font-weight:700; color:#fff; margin-top:0.15rem; line-height:1.1; }
+  .hero .note { font-size:0.72rem; color:#777; margin-top:0.1rem; }
+  .good { color:#a8e6cf !important; } .warn { color:#ffd93d !important; } .bad { color:#ff6b6b !important; }
+  #chartWrap { flex:1; position:relative; min-height:0; background:#0d0d0d; border:1px solid #1c1c1c; border-radius:8px; }
+  #chart { display:block; width:100%; height:100%; }
+  .chart-legend { position:absolute; top:8px; right:14px; font-size:0.74rem; color:#999; display:flex; gap:1rem; background:rgba(13,13,13,0.7); padding:2px 6px; border-radius:5px; }
+  .chart-legend span::before { content:''; display:inline-block; width:14px; height:3px; border-radius:2px; margin-right:5px; vertical-align:middle; }
+  .lg-cash::before { background:#4ecdc4; } .lg-mrr::before { background:#6c5ce7; } .lg-pin::before { background:#555; }
+  .footer { display:flex; gap:1rem; margin-top:0.8rem; align-items:flex-start; }
+  .pins { flex:1; min-width:0; }
+  .pins table { width:100%; border-collapse:collapse; font-size:0.76rem; }
+  .pins th, .pins td { text-align:right; padding:0.25rem 0.5rem; border-bottom:1px solid #1a1a1a; color:#bbb; white-space:nowrap; }
+  .pins th { color:#666; font-weight:600; text-transform:uppercase; font-size:0.66rem; letter-spacing:0.5px; }
+  .pins td:first-child, .pins th:first-child { text-align:left; }
+  .pins .rm { cursor:pointer; color:#ff6b6b; opacity:0.7; } .pins .rm:hover{opacity:1;}
+  .pins .empty { color:#555; font-size:0.78rem; padding:0.4rem 0; }
+  details.formula { font-size:0.78rem; color:#999; max-width:320px; }
+  details.formula summary { cursor:pointer; color:#888; }
+  details.formula code { color:#4ecdc4; }
+  details.formula div { margin-top:0.4rem; line-height:1.7; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>SaaS Unit Economics — Playground</h1>
+    <div class="sub">Turn the knobs and watch the economics move. The cash curve shows when cumulative gross profit pays back acquisition spend. Pin scenarios to compare, or copy the URL to share a tuned model.</div>
+  </div>
+  <div class="topbtns">
+    <button id="pin" class="primary">📌 Pin scenario</button>
+    <button id="export">⇩ Export PNG</button>
+    <button id="reset">↺ Reset</button>
+  </div>
+</header>
+<div class="main">
+  <div class="panel">
+    <div class="grp-title">Presets</div>
+    <div class="presets">
+      <button data-preset="conservative">Conservative</button>
+      <button data-preset="aggressive">Aggressive</button>
+      <button data-preset="plg">PLG</button>
+    </div>
+    <div class="grp-title">Revenue</div>
+    <div class="ctrl"><label>Price / seat / mo <span class="v" id="lp"></span></label><input id="price" type="range" min="5" max="200" step="5"></div>
+    <div class="ctrl"><label>Seats / account <span class="v" id="ls"></span></label><input id="seats" type="range" min="1" max="50" step="1"></div>
+    <div class="ctrl"><label>Gross margin <span class="v" id="lgm"></span></label><input id="gm" type="range" min="40" max="95" step="1"></div>
+    <div class="ctrl"><label>Net expansion / mo <span class="v" id="lex"></span></label><input id="ex" type="range" min="0" max="5" step="0.25"></div>
+    <div class="grp-title">Retention & acquisition</div>
+    <div class="ctrl"><label>Monthly churn <span class="v" id="lch"></span></label><input id="ch" type="range" min="0.5" max="10" step="0.25"></div>
+    <div class="ctrl"><label>CAC <span class="v" id="lcac"></span></label><input id="cac" type="range" min="100" max="5000" step="50"></div>
+    <div class="ctrl"><label>New customers / mo <span class="v" id="lnp"></span></label><input id="np" type="range" min="5" max="200" step="5"></div>
+    <div class="ctrl"><label>Horizon <span class="v" id="lhz"></span></label><input id="hz" type="range" min="12" max="60" step="6"></div>
+  </div>
+  <div class="results">
+    <div class="heroes">
+      <div class="hero"><div class="k">LTV</div><div class="val" id="hLtv">—</div><div class="note" id="nLtv"></div></div>
+      <div class="hero"><div class="k">LTV : CAC</div><div class="val" id="hRatio">—</div><div class="note" id="nRatio"></div></div>
+      <div class="hero"><div class="k">CAC payback</div><div class="val" id="hPb">—</div><div class="note">months</div></div>
+      <div class="hero"><div class="k">Ending MRR</div><div class="val" id="hMrr">—</div><div class="note" id="nMrr"></div></div>
+    </div>
+    <div id="chartWrap">
+      <div class="chart-legend"><span class="lg-cash">cumulative cash</span><span class="lg-mrr">MRR</span><span class="lg-pin">pinned</span></div>
+      <canvas id="chart"></canvas>
+    </div>
+    <div class="footer">
+      <div class="pins" id="pins"></div>
+      <details class="formula">
+        <summary>How this is computed</summary>
+        <div>
+          <code>ARPA = price × seats</code><br>
+          <code>GP/acct = ARPA × margin</code><br>
+          <code>retention = 1 − churn</code>; <code>g = retention × (1+expansion)</code><br>
+          <code>LTV = GP/acct ÷ (1 − g)</code> (bounded if g ≥ 1)<br>
+          <code>payback = CAC ÷ GP/acct</code><br>
+          <code>MRRₜ = MRRₜ₋₁·g + new·ARPA</code><br>
+          <code>cashₜ = cashₜ₋₁ + MRRₜ·margin − new·CAC</code>
+        </div>
+      </details>
+    </div>
+  </div>
+</div>
+<script>
+// ---------- model ----------
+const DEFAULTS = { price:50, seats:5, gm:80, ex:1, ch:3, cac:1200, np:20, hz:36 };
+const PRESETS = {
+  conservative: { price:40, seats:4, gm:78, ex:0.5, ch:4, cac:1500, np:15, hz:36 },
+  aggressive:   { price:80, seats:8, gm:82, ex:1.5, ch:2.5, cac:2500, np:40, hz:36 },
+  plg:          { price:20, seats:3, gm:85, ex:2, ch:5, cac:300, np:120, hz:36 },
+};
+let state = { ...DEFAULTS };
+
+// pure function: inputs -> outputs
+function compute(s) {
+  const arpa = s.price * s.seats;
+  const margin = s.gm / 100;
+  const gpAcct = arpa * margin;
+  const retention = 1 - s.ch / 100;
+  const g = retention * (1 + s.ex / 100);
+  let ltv, ltvBounded = false;
+  if (g < 1) ltv = gpAcct / (1 - g);
+  else { // diverges — bound to horizon
+    let sum = 0; for (let t = 0; t < s.hz; t++) sum += Math.pow(g, t);
+    ltv = gpAcct * sum; ltvBounded = true;
+  }
+  const ratio = ltv / s.cac;
+  const payback = gpAcct > 0 ? s.cac / gpAcct : Infinity;
+  // monthly simulation
+  const mrr = [], cash = []; let m = 0, c = 0; let breakeven = null;
+  for (let t = 1; t <= s.hz; t++) {
+    m = m * g + s.np * arpa;
+    c = c + m * margin - s.np * s.cac;
+    mrr.push(m); cash.push(c);
+    if (breakeven === null && c >= 0) breakeven = t;
+  }
+  return { arpa, gpAcct, ltv, ltvBounded, ratio, payback, mrr, cash, breakeven, endMrr: m };
+}
+
+// ---------- formatting ----------
+const fmt$ = v => { const a=Math.abs(v), s=v<0?'-':''; return a>=1e6 ? s+'$'+(a/1e6).toFixed(2)+'M' : a>=1e3 ? s+'$'+(a/1e3).toFixed(1)+'k' : s+'$'+Math.round(a); };
+const cls = (v, good, warn) => v >= good ? 'good' : v >= warn ? 'warn' : 'bad';
+
+// ---------- controls ----------
+const CTRL = {
+  price:['lp', v=>'$'+v], seats:['ls', v=>v], gm:['lgm', v=>v+'%'], ex:['lex', v=>v+'%/mo'],
+  ch:['lch', v=>v+'%/mo'], cac:['lcac', v=>'$'+v], np:['lnp', v=>v], hz:['lhz', v=>v+' mo'],
+};
+function syncControls() {
+  for (const id in CTRL) {
+    const inp = document.getElementById(id);
+    inp.value = state[id];
+    document.getElementById(CTRL[id][0]).textContent = CTRL[id][1](state[id]);
+  }
+}
+for (const id in CTRL) {
+  document.getElementById(id).addEventListener('input', e => {
+    state[id] = +e.target.value;
+    document.getElementById(CTRL[id][0]).textContent = CTRL[id][1](state[id]);
+    render(); writeHash();
+  });
+}
+document.querySelectorAll('[data-preset]').forEach(b =>
+  b.onclick = () => { state = { ...PRESETS[b.dataset.preset] }; syncControls(); render(); writeHash(); });
+document.getElementById('reset').onclick = () => { state = { ...DEFAULTS }; syncControls(); render(); writeHash(); };
+
+// ---------- URL state ----------
+const KEYS = Object.keys(DEFAULTS);
+function writeHash() { location.hash = KEYS.map(k => k+'='+state[k]).join('&'); }
+function readHash() {
+  if (!location.hash) return false;
+  const p = new URLSearchParams(location.hash.slice(1)); let ok = false;
+  KEYS.forEach(k => { if (p.has(k)) { state[k] = +p.get(k); ok = true; } });
+  return ok;
+}
+
+// ---------- pins ----------
+let pins = [];
+try { pins = JSON.parse(localStorage.getItem('vis-ue-pins') || '[]'); } catch(e) {}
+const PIN_COLORS = ['#ff8a5c','#ffd93d','#81ecec','#ff6b6b','#a8e6cf'];
+document.getElementById('pin').onclick = () => {
+  const o = compute(state);
+  pins.push({ inputs: { ...state }, ltv:o.ltv, ratio:o.ratio, payback:o.payback, endMrr:o.endMrr,
+              cash:o.cash.slice(), label:'S'+(pins.length+1) });
+  if (pins.length > 5) pins.shift();
+  savePins(); render();
+};
+function savePins(){ try{ localStorage.setItem('vis-ue-pins', JSON.stringify(pins)); }catch(e){} }
+function renderPins() {
+  const el = document.getElementById('pins');
+  if (!pins.length) { el.innerHTML = '<div class="empty">No pinned scenarios — tune the model and hit 📌 Pin to compare.</div>'; return; }
+  let h = '<table><tr><th>Scenario</th><th>LTV</th><th>LTV:CAC</th><th>Payback</th><th>End MRR</th><th></th></tr>';
+  pins.forEach((p,i) => {
+    h += `<tr><td><span style="color:${PIN_COLORS[i%PIN_COLORS.length]}">●</span> ${p.label}</td>`+
+         `<td>${fmt$(p.ltv)}</td><td>${p.ratio.toFixed(1)}×</td>`+
+         `<td>${isFinite(p.payback)?p.payback.toFixed(1):'∞'}</td><td>${fmt$(p.endMrr)}</td>`+
+         `<td class="rm" data-i="${i}">✕</td></tr>`;
+  });
+  h += '</table>';
+  el.innerHTML = h;
+  el.querySelectorAll('.rm').forEach(x => x.onclick = () => { pins.splice(+x.dataset.i,1); savePins(); render(); });
+}
+
+// ---------- chart ----------
+const cv = document.getElementById('chart'), ctx = cv.getContext('2d');
+let CW, CH, dpr;
+function sizeChart() {
+  dpr = window.devicePixelRatio || 1;
+  const r = cv.getBoundingClientRect(); CW = r.width; CH = r.height;
+  cv.width = CW*dpr; cv.height = CH*dpr; ctx.setTransform(dpr,0,0,dpr,0,0);
+}
+window.addEventListener('resize', () => { sizeChart(); render(); });
+
+function drawChart(o) {
+  ctx.clearRect(0,0,CW,CH);
+  const padL=64, padR=58, padT=30, padB=28;
+  const W = CW-padL-padR, H = CH-padT-padB;
+  const n = o.cash.length;
+  // ranges across live + pins
+  let cashMin = Math.min(0, ...o.cash), cashMax = Math.max(0, ...o.cash);
+  pins.forEach(p => p.cash.forEach(v => { cashMin=Math.min(cashMin,v); cashMax=Math.max(cashMax,v); }));
+  const mrrMax = Math.max(1, ...o.mrr);
+  if (cashMax === cashMin) cashMax = cashMin + 1;
+  const x = i => padL + W * (i/(n-1));
+  const yCash = v => padT + H * (1 - (v-cashMin)/(cashMax-cashMin));
+  const yMrr = v => padT + H * (1 - v/mrrMax);
+
+  // grid + axes
+  ctx.strokeStyle='rgba(255,255,255,0.06)'; ctx.lineWidth=1; ctx.fillStyle='#666'; ctx.font='11px -apple-system,sans-serif';
+  ctx.textAlign='right'; ctx.textBaseline='middle';
+  for (let k=0;k<=4;k++){ const v=cashMin+(cashMax-cashMin)*k/4, yy=yCash(v);
+    ctx.beginPath(); ctx.moveTo(padL,yy); ctx.lineTo(padL+W,yy); ctx.stroke(); ctx.fillText(fmt$(v),padL-8,yy); }
+  // zero line emphasised
+  ctx.strokeStyle='rgba(255,255,255,0.22)'; ctx.beginPath(); ctx.moveTo(padL,yCash(0)); ctx.lineTo(padL+W,yCash(0)); ctx.stroke();
+  // x labels
+  ctx.textAlign='center'; ctx.textBaseline='top'; ctx.fillStyle='#666';
+  for (let k=0;k<=n-1;k+=Math.max(1,Math.round((n-1)/6))) ctx.fillText('m'+(k+1), x(k), padT+H+6);
+
+  // pinned ghosts
+  pins.forEach((p,pi) => {
+    ctx.strokeStyle = PIN_COLORS[pi%PIN_COLORS.length]; ctx.globalAlpha=0.35; ctx.lineWidth=1.5;
+    ctx.beginPath(); p.cash.forEach((v,i)=>{ const xx=padL+W*(i/(p.cash.length-1)); i?ctx.lineTo(xx,yCash(v)):ctx.moveTo(xx,yCash(v)); }); ctx.stroke();
+    ctx.globalAlpha=1;
+  });
+
+  // MRR line (secondary)
+  ctx.strokeStyle='#6c5ce7'; ctx.lineWidth=1.5; ctx.globalAlpha=0.7; ctx.beginPath();
+  o.mrr.forEach((v,i)=> i?ctx.lineTo(x(i),yMrr(v)):ctx.moveTo(x(i),yMrr(v))); ctx.stroke(); ctx.globalAlpha=1;
+
+  // cash line (hero) with fill
+  ctx.strokeStyle='#4ecdc4'; ctx.lineWidth=2.5; ctx.beginPath();
+  o.cash.forEach((v,i)=> i?ctx.lineTo(x(i),yCash(v)):ctx.moveTo(x(i),yCash(v))); ctx.stroke();
+
+  // break-even marker
+  if (o.breakeven) {
+    const bx=x(o.breakeven-1);
+    ctx.strokeStyle='#a8e6cf'; ctx.setLineDash([4,4]); ctx.beginPath(); ctx.moveTo(bx,padT); ctx.lineTo(bx,padT+H); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle='#a8e6cf'; ctx.textAlign='center'; ctx.textBaseline='bottom'; ctx.font='11px -apple-system,sans-serif';
+    ctx.fillText('break-even m'+o.breakeven, bx, padT+12);
+  } else {
+    ctx.fillStyle='#ff6b6b'; ctx.textAlign='right'; ctx.textBaseline='top'; ctx.font='12px -apple-system,sans-serif';
+    ctx.fillText('no break-even in horizon', padL+W, padT);
+  }
+}
+
+// ---------- render ----------
+function render() {
+  const o = compute(state);
+  document.getElementById('hLtv').textContent = fmt$(o.ltv);
+  document.getElementById('nLtv').textContent = o.ltvBounded ? 'bounded — expansion ≥ churn' : 'per account';
+  const rEl = document.getElementById('hRatio'); rEl.textContent = o.ratio.toFixed(1)+'×';
+  rEl.className = 'val '+cls(o.ratio,3,1);
+  document.getElementById('nRatio').textContent = o.ratio>=3?'healthy':o.ratio>=1?'thin':'unprofitable';
+  const pbEl = document.getElementById('hPb'); pbEl.textContent = isFinite(o.payback)?o.payback.toFixed(1):'∞';
+  pbEl.className = 'val '+(o.payback<=12?'good':o.payback<=24?'warn':'bad');
+  document.getElementById('hMrr').textContent = fmt$(o.endMrr);
+  document.getElementById('nMrr').textContent = 'at month '+state.hz;
+  drawChart(o); renderPins();
+}
+
+// ---------- export (Hard Rule 9: DOM strategy via html2canvas) ----------
+document.getElementById('export').onclick = () => {
+  const node = document.querySelector('.results');
+  html2canvas(node, { backgroundColor:'#0a0a0a', scale:2 }).then(canvas => {
+    canvas.toBlob(b => { const a=document.createElement('a'); a.href=URL.createObjectURL(b);
+      a.download='visualise-unit-economics.png'; a.click(); URL.revokeObjectURL(a.href); });
+  });
+};
+
+// ---------- boot ----------
+readHash();
+syncControls();
+sizeChart();
+render();
+</script>
+</body>
+</html>
